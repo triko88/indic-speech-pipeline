@@ -5,3 +5,4 @@ data/
 runs/
 .cache/
 .pytest_cache/
+models/

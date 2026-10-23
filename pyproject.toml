@@ -38,3 +38,9 @@ explicit = true
 pythonpath = ["."]
 testpaths = ["tests"]
 markers = ["hw: loads a model or touches the GPU; run alone via `make test-hw`"]
+# Both come from IndicConformer's upstream remote code (pinned torch/numpy in uv.lock), not ours:
+# its TorchScript preprocessor load, and `tensor + ndarray` once per RNNT decode step.
+filterwarnings = [
+    "ignore:`torch.jit.load` is deprecated:FutureWarning",
+    "ignore:__array_wrap__ must accept context:DeprecationWarning:transformers_modules",
+]

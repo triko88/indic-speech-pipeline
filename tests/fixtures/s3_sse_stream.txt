@@ -1,0 +1,14 @@
+0.23425	data: {"choices":[{"finish_reason":null,"index":0,"delta":{"role":"assistant","content":null}}],"created":1792784251,"id":"chatcmpl-X0q9jo6EDZjxjQDRP4KL06J3BXvchfq6","model":"/home/apan/.cache/huggingface/hub/models--bartowski--Llama-3.2-1B-Instruct-GGUF/snapshots/067b946cf014b7c697f3654f621d577a3e3afd1c/Llama-3.2-1B-Instruct-Q4_K_M.gguf","system_fingerprint":"b1-06230cb","object":"chat.completion.chunk"}
+0.234258	
+0.234261	data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":"NO"}}],"created":1792784251,"id":"chatcmpl-X0q9jo6EDZjxjQDRP4KL06J3BXvchfq6","model":"/home/apan/.cache/huggingface/hub/models--bartowski--Llama-3.2-1B-Instruct-GGUF/snapshots/067b946cf014b7c697f3654f621d577a3e3afd1c/Llama-3.2-1B-Instruct-Q4_K_M.gguf","system_fingerprint":"b1-06230cb","object":"chat.completion.chunk"}
+0.234262	
+0.239637	data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":"_ANS"}}],"created":1792784251,"id":"chatcmpl-X0q9jo6EDZjxjQDRP4KL06J3BXvchfq6","model":"/home/apan/.cache/huggingface/hub/models--bartowski--Llama-3.2-1B-Instruct-GGUF/snapshots/067b946cf014b7c697f3654f621d577a3e3afd1c/Llama-3.2-1B-Instruct-Q4_K_M.gguf","system_fingerprint":"b1-06230cb","object":"chat.completion.chunk"}
+0.239641	
+0.244125	data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":"WER"}}],"created":1792784251,"id":"chatcmpl-X0q9jo6EDZjxjQDRP4KL06J3BXvchfq6","model":"/home/apan/.cache/huggingface/hub/models--bartowski--Llama-3.2-1B-Instruct-GGUF/snapshots/067b946cf014b7c697f3654f621d577a3e3afd1c/Llama-3.2-1B-Instruct-Q4_K_M.gguf","system_fingerprint":"b1-06230cb","object":"chat.completion.chunk"}
+0.24413	
+0.248678	data: {"choices":[{"finish_reason":"stop","index":0,"delta":{}}],"created":1792784251,"id":"chatcmpl-X0q9jo6EDZjxjQDRP4KL06J3BXvchfq6","model":"/home/apan/.cache/huggingface/hub/models--bartowski--Llama-3.2-1B-Instruct-GGUF/snapshots/067b946cf014b7c697f3654f621d577a3e3afd1c/Llama-3.2-1B-Instruct-Q4_K_M.gguf","system_fingerprint":"b1-06230cb","object":"chat.completion.chunk"}
+0.248685	
+0.248688	data: {"choices":[],"created":1792784251,"id":"chatcmpl-X0q9jo6EDZjxjQDRP4KL06J3BXvchfq6","model":"/home/apan/.cache/huggingface/hub/models--bartowski--Llama-3.2-1B-Instruct-GGUF/snapshots/067b946cf014b7c697f3654f621d577a3e3afd1c/Llama-3.2-1B-Instruct-Q4_K_M.gguf","system_fingerprint":"b1-06230cb","object":"chat.completion.chunk","usage":{"completion_tokens":4,"prompt_tokens":102,"total_tokens":106,"prompt_tokens_details":{"cached_tokens":0}},"timings":{"cache_n":0,"prompt_n":102,"prompt_ms":217.542,"prompt_per_token_ms":2.132764705882353,"prompt_per_second":468.87497586672913,"predicted_n":4,"predicted_ms":14.536,"predicted_per_token_ms":4.8453333333333335,"predicted_per_second":206.38414969730326}}
+0.248689	
+0.248818	data: [DONE]
+0.248821	
