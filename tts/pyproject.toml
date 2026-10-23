@@ -1,0 +1,24 @@
+# Separate uv project: parler-tts pins transformers 4.46 on Python 3.11, which can't share a lock with the main env.
+[project]
+name = "indic-speech-pipeline-tts"
+version = "0.1.0"
+requires-python = "==3.11.*"
+dependencies = [
+    "torch==2.14.1",
+    "torchaudio==2.11.0",  # direct so it resolves from the CPU index (transitive via descript-audio-codec)
+    "parler-tts",
+    "transformers==4.46.1",
+    "soundfile==0.14.0",
+    "scipy==1.17.1",
+    "numpy==2.4.6",
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchaudio = { index = "pytorch-cpu" }
+parler-tts = { git = "https://github.com/huggingface/parler-tts.git", rev = "d108732cd57788ec86bc857d99a6cabd66663d68" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

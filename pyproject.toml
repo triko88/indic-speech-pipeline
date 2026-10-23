@@ -1,7 +1,40 @@
 [project]
 name = "indic-speech-pipeline"
 version = "0.1.0"
-requires-python = ">=3.12"
+description = "Indic (hi, ta) speech -> text-response system and its evaluation, on one laptop"
+requires-python = "==3.12.*"
 dependencies = [
-    "gradio>=6.30.0",
+    "torch==2.14.1",
+    "torchaudio==2.11.0",
+    "transformers==5.20.2",
+    "onnxruntime==1.31.0",
+    "numpy==2.5.4",
+    "scipy==1.18.1",
+    "soundfile==0.14.0",
+    "librosa==1.0.0",
+    "datasets==5.1.0",
+    "huggingface_hub==2.3.0",
+    "indic-nlp-library==0.92",
+    "regex==2026.9.29",
+    "httpx==0.28.1",
+    "psutil==7.2.2",
+    "gradio==6.30.0",
 ]
+
+[dependency-groups]
+dev = ["pytest==9.1.1", "jiwer==4.0.0"]
+
+# CPU-only torch: never pull CUDA wheels.
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchaudio = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = ["hw: loads a model or touches the GPU; run alone via `make test-hw`"]

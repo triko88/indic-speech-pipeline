@@ -1,0 +1,3 @@
+Available devices:
+  Vulkan0: AMD Radeon 680M (RADV REMBRANDT) (8101 MiB, 6780 MiB free)
+  Vulkan1: AMD Radeon RX 6650M (RADV NAVI23) (8176 MiB, 8160 MiB free)
