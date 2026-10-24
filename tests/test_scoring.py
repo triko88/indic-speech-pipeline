@@ -61,6 +61,8 @@ def test_verbose_and_off_script_flags():
     latin_verdict = label_response("Agra", ("आगरा",), HINDI_PASSAGE, True, "hi")
     assert latin_verdict.off_script and not latin_verdict.verbose
     assert not label_response("NO_ANSWER", ("आगरा",), HINDI_PASSAGE, True, "hi").off_script
+    # digits only: no letters to judge the script by, so not off-script
+    assert not label_response("१९५४-५६", ("१९५४",), HINDI_PASSAGE, True, "hi").off_script
 
 
 def test_token_f1_and_passage_support():

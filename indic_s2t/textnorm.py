@@ -13,11 +13,12 @@ SCRIPT_BLOCKS = {"hi": (0x0900, 0x097F), "ta": (0x0B80, 0x0BFF)}
 
 @lru_cache(maxsize=None)
 def indic_normalizer(lang, strip_nukta):
-    return IndicNormalizerFactory().get_normalizer(lang, remove_nuktas=strip_nukta)
+    # Anusvara before a stop becomes the homorganic nasal + virama (हिंदू -> हिन्दू); a no-op for Tamil.
+    return IndicNormalizerFactory().get_normalizer(lang, remove_nuktas=strip_nukta, nasals_mode="to_nasal_consonants")
 
 
 def normalize(text, lang, strip_nukta=False):
-    """NFC; strip ZWJ/ZWNJ/ZWSP/BOM; indic-nlp normaliser; Indic digits -> ASCII; drop \\p{P}\\p{S}; collapse spaces; lowercase."""
+    """NFC; strip ZWJ/ZWNJ/ZWSP/BOM; indic-nlp normaliser (nasals unified); Indic digits -> ASCII; drop \\p{P}\\p{S}; collapse spaces; lowercase."""
     composed_text = ZERO_WIDTH_CHARACTERS.sub("", unicodedata.normalize("NFC", text))
     indic_normalized = indic_normalizer(lang, strip_nukta).normalize(composed_text)
     ascii_digits = regex.sub(r"\d", lambda digit_match: str(unicodedata.digit(digit_match.group())), indic_normalized)

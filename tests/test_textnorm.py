@@ -18,6 +18,13 @@ def test_nukta_kept_by_default_and_stripped_on_flag():
     assert normalize(f"{precomposed_qa}िला", "hi", strip_nukta=True) == "किला"
 
 
+def test_nasal_spellings_are_unified_for_every_language():
+    assert normalize("हिंदू", "hi") == normalize("हिन्दू", "hi")
+    assert normalize("संबंध", "hi") == normalize("सम्बन्ध", "hi")
+    assert normalize("संसार", "hi") == "संसार"  # anusvara before a non-stop consonant stays
+    assert normalize("சென்னை பம்பாய்", "ta") == "சென்னை பம்பாய்"  # Tamil has no anusvara: untouched
+
+
 def test_indic_digits_become_ascii():
     assert normalize("१२३ रुपये", "hi") == "123 रुपये"
     assert normalize("௧௨ ரூபாய்", "ta") == "12 ரூபாய்"

@@ -23,11 +23,13 @@ RULE_LABELS = ("CORRECT", "CORRECT_ABSTAIN", "FALSE_ABSTAIN", "WRONG_GROUNDED", 
 FAILURE_TYPES = ("FALSE_ABSTAIN", "WRONG_GROUNDED", "HALLUCINATED")
 WER_BUCKETS = ("0", "(0,20%]", "(20,50%]", ">50%")
 AUDIT_SIZE = 40
+QUESTIONS_PATH = Path("data/qa_questions.jsonl")
 EXAMPLES_PER_TYPE = 3
 
 METRIC_DEFINITIONS = """\
 **Normalisation** (identical for reference and hypothesis): Unicode NFC; strip ZWJ, ZWNJ, ZWSP, BOM; indic-nlp-library
-normaliser; Indic digits to ASCII; replace `\\p{P}\\p{S}` (incl. danda and double danda) with spaces; collapse whitespace;
+normaliser with nasal unification (`nasals_mode=to_nasal_consonants`: anusvara before a stop becomes the
+homorganic nasal + virama, so हिंदू = हिन्दू; a no-op for Tamil); Indic digits to ASCII; replace `\\p{P}\\p{S}` (incl. danda and double danda) with spaces; collapse whitespace;
 lowercase. Nukta stripping is reported as a separate column (`WER no-nukta`).
 
 **ASR.** Own Levenshtein alignment with S/D/I counts. Corpus WER = Σ(S+D+I) / Σ reference words. CER over Unicode code
@@ -332,11 +334,10 @@ def setup_section(run_dir):
 
 
 def selection_section(selection_dir):
-    result_paths = sorted(Path(selection_dir).glob("*.json"))
-    if not result_paths:
+    if not list(Path(selection_dir).glob("*.json")):
         return "_LLM selection not run_\n"
-    from scripts.select_llm import summary_markdown
-    results = tuple(json.loads(path.read_text(encoding="utf-8")) for path in result_paths)
+    from scripts.select_llm import load_results, summary_markdown
+    results = load_results(selection_dir, QUESTIONS_PATH)
     return summary_markdown(results).replace("# LLM selection\n", "", 1).replace("## ", "### ")
 
 

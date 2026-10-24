@@ -85,7 +85,8 @@ def label_response(response, gold_answers, context, answerable, lang):
         label=label,
         abstained=abstained,
         verbose=len(words(normalize(response, lang))) > VERBOSE_TOKENS,
-        off_script=not abstained and script_letter_share(response, lang) < SCRIPT_SHARE_THRESHOLD,
+        off_script=(not abstained and bool(regex.search(r"\p{L}", response))  # digits-only answers have no script
+                    and script_letter_share(response, lang) < SCRIPT_SHARE_THRESHOLD),
     )
 
 

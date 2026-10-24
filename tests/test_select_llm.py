@@ -76,3 +76,17 @@ def test_summary_markdown_has_tables_and_recommendation():
     markdown = select_llm.summary_markdown(results)
     assert "| A |" in markdown and "| B |" in markdown
     assert "Answerer: **B**" in markdown and "Judge: **A**" in markdown
+
+
+def test_relabel_recomputes_pilot_with_current_rules():
+    questions_by_id = {"q1": {"id": "q1", "lang": "hi", "context": "हिन्दू कोड बिल पर बहस हुई।",
+                              "answers": ["हिन्दू कोड बिल"], "answerable": True}}
+    stale_result = {"name": "B", "family": "qwen", "pilot": {"accuracy": 0.0},
+                    "pilot_items": [{"id": "q1", "lang": "hi", "answerable": True, "response": "हिंदू कोड बिल",
+                                     "label": "WRONG_GROUNDED", "off_script": True, "verbose": False,
+                                     "reasoning_text": "", "ttft_s": 0.5, "total_s": 1.0, "timings": {}}]}
+    relabeled = select_llm.relabel(stale_result, questions_by_id)
+    assert relabeled["pilot_items"][0]["label"] == "CORRECT"  # nasal spellings now normalise to the same text
+    assert relabeled["pilot_items"][0]["off_script"] is False
+    assert relabeled["pilot"]["accuracy"] == 1.0
+    assert stale_result["pilot_items"][0]["label"] == "WRONG_GROUNDED"  # input left untouched

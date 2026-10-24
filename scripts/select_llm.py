@@ -61,6 +61,25 @@ def pilot_summary(pilot_items):
     }
 
 
+def relabel(result, questions_by_id):
+    """Re-score stored pilot responses with the current rules, so summaries never show labels from older rules."""
+    from indic_s2t import scoring
+    relabeled_items = []
+    for item in result["pilot_items"]:
+        question = questions_by_id[item["id"]]
+        verdict = scoring.label_response(item["response"], question["answers"], question["context"],
+                                         question["answerable"], question["lang"])
+        relabeled_items.append({**item, "label": verdict.label, "off_script": verdict.off_script,
+                                "verbose": verdict.verbose})
+    return {**result, "pilot_items": relabeled_items, "pilot": pilot_summary(relabeled_items)}
+
+
+def load_results(out_dir, questions_path):
+    questions_by_id = {question["id"]: question for question in read_jsonl(questions_path)}
+    return tuple(relabel(json.loads(result_path.read_text(encoding="utf-8")), questions_by_id)
+                 for result_path in sorted(Path(out_dir).glob("*.json")))
+
+
 def recommend(results):
     """(answerer, judge): answerer is the best A/B by accuracy then latency; judge is the best other-family model."""
     ranked = sorted(results, key=lambda result: (-result["pilot"]["accuracy"], result["pilot"]["median_latency_s"]))
@@ -169,9 +188,8 @@ def evaluate_candidate(args):
     print(f"wrote {result_path}: accuracy {result['pilot']['accuracy']}, fits {fit['fits']}")
 
 
-def summarize(out_dir):
-    results = tuple(json.loads(result_path.read_text(encoding="utf-8"))
-                    for result_path in sorted(out_dir.glob("*.json")))
+def summarize(out_dir, questions_path):
+    results = load_results(out_dir, questions_path)
     summary_path = out_dir.with_suffix(".md")
     summary_path.write_text(summary_markdown(results), encoding="utf-8")
     print(f"wrote {summary_path}: answerer/judge = {recommend(results)}")
@@ -190,7 +208,7 @@ def main():
     parser.add_argument("--extra_args", default="", help='one string, e.g. --extra_args="--n-cpu-moe 20"')
     args = parser.parse_args()
     if args.summarize:
-        summarize(args.out)
+        summarize(args.out, args.questions)
     elif not (args.gguf and args.name and args.family):
         parser.error("--gguf, --name and --family are required unless --summarize")
     else:
