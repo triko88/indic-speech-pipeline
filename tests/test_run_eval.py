@@ -34,6 +34,30 @@ def test_work_keys_per_stage():
     assert run_eval.work_keys("judge", ITEMS, conditions) == llm_keys
 
 
+def test_llm_work_keys_add_text_conditions_for_qa_items_only():
+    llm_keys = run_eval.work_keys("llm", ITEMS, ("clean",), ("scramble", "wrong_passage"))
+    assert ("qa_hi_000", "scramble") in llm_keys and ("qa_en_000", "wrong_passage") in llm_keys
+    assert len(llm_keys) == 3 * 4  # clean, oracle, scramble, wrong_passage
+    assert len(run_eval.work_keys("asr", ITEMS, ("clean",), ("scramble",))) == len(ITEMS)  # never sent to ASR
+
+
+def test_qa_input_for_acoustic_oracle_and_text_conditions():
+    item = {**ITEMS[3], "context": "पहला अनुच्छेद", "answers": ["एक"], "answerable": True}
+    language_contexts = ("पहला अनुच्छेद", "दूसरा अनुच्छेद")
+    asr_hypotheses = {("qa_hi_000", "clean"): "प्रश्न एक गलत"}
+    heard = run_eval.qa_input_for(item, "clean", asr_hypotheses, language_contexts)
+    assert (heard.question, heard.context, heard.answers, heard.answerable) == (
+        "प्रश्न एक गलत", "पहला अनुच्छेद", ("एक",), True)
+    assert run_eval.qa_input_for(item, "oracle", asr_hypotheses, language_contexts).question == "प्रश्न एक"
+    mismatched = run_eval.qa_input_for(item, "wrong_passage", asr_hypotheses, language_contexts)
+    assert (mismatched.context, mismatched.answerable) == ("दूसरा अनुच्छेद", False)
+
+
+def test_text_conditions_default_to_all_and_can_be_turned_off():
+    assert run_eval.parse_args([]).text_conditions == list(run_eval.TEXT_CONDITIONS)
+    assert run_eval.parse_args(["--text_conditions"]).text_conditions == []
+
+
 def test_run_pending_resumes_and_excludes_warmup(tmp_path):
     out_path = tmp_path / "asr.jsonl"
     write_jsonl(out_path, [{"id": "hi_000", "condition": "clean", "hyp": "done earlier"}])

@@ -14,10 +14,13 @@ from pathlib import Path
 import numpy as np
 
 from indic_s2t import metrics
+from indic_s2t.perturb import TEXT_CONDITIONS
 from indic_s2t.scoring import label_response, qa_rates
 from indic_s2t.textnorm import normalize, words
 
 ORACLE = "oracle"
+GOLD_TEXT_CONDITIONS = (ORACLE, *TEXT_CONDITIONS)  # the LLM gets gold-derived text: no ASR in the loop
+LENGTH_BUCKETS = ("3-7", "8-11", "12+")
 CORRECT_LABELS = ("CORRECT", "CORRECT_ABSTAIN")
 RULE_LABELS = ("CORRECT", "CORRECT_ABSTAIN", "FALSE_ABSTAIN", "WRONG_GROUNDED", "HALLUCINATED")
 FAILURE_TYPES = ("FALSE_ABSTAIN", "WRONG_GROUNDED", "HALLUCINATED")
@@ -51,6 +54,14 @@ Abstention recall = CORRECT_ABSTAIN / unanswerable. False-abstain rate = FALSE_A
 **Error attribution** (per language × condition, against the gold-text `oracle` run of the same items): both correct;
 ASR-induced (oracle correct, ASR wrong); LM failure (both wrong); ASR-only correct (oracle wrong, ASR correct).
 Δ = ASR correctness − oracle correctness in percentage points. p-values: exact two-sided McNemar on the discordant pairs.
+
+**Linguistic conditions** (gold question text, straight to the LLM like `oracle`; `indic_s2t/perturb.py`, seeded per
+item). Syntactic / structural: `scramble` (word order shuffled), `drop_head` / `drop_tail` (first / last word removed;
+the tail carries the verb and question particle in SOV languages). Semantic: `swap_anchor` (the longest question word
+found in the passage is replaced by a word of at least its length from another passage: a false premise) and
+`wrong_passage` (another passage that lacks the gold answers). Both semantic conditions are unanswerable by
+construction, so abstention recall = correctness and every answer is `HALLUCINATED`. Δ and McNemar p are paired
+against `oracle` on the same items. Syntactic difficulty: correctness by gold-question length (normalised words).
 
 **Latency.** 3 warm-ups per stage excluded; `time.perf_counter`. ASR: seconds per utterance, RTF = Σ ASR time / Σ audio
 time, and p95 of per-utterance RTF. LLM: client TTFT and total time; server prompt and decode tokens/s from llama-server
@@ -117,8 +128,12 @@ def correctness_by_id(llm_rows, verdicts, lang, condition):
             for row in llm_rows if row["lang"] == lang and row["condition"] == condition}
 
 
-def attribution_table(llm_rows, verdicts):
-    lang_conditions = sorted({(row["lang"], row["condition"]) for row in llm_rows if row["condition"] != ORACLE})
+def is_acoustic(condition):
+    return condition not in GOLD_TEXT_CONDITIONS
+
+
+def attribution_table(llm_rows, verdicts, keep_condition=is_acoustic):
+    lang_conditions = sorted({(row["lang"], row["condition"]) for row in llm_rows if keep_condition(row["condition"])})
     table = []
     for lang, condition in lang_conditions:
         condition_correct = correctness_by_id(llm_rows, verdicts, lang, condition)
@@ -146,6 +161,32 @@ def attribution_table(llm_rows, verdicts):
     return table
 
 
+def linguistic_table(llm_rows, verdicts):
+    """QA rates per text condition, with correctness paired against oracle on the same items."""
+    qa_rows = {(row["lang"], row["condition"]): row for row in qa_table(llm_rows, verdicts)}
+    return [{**qa_rows[(row["lang"], row["condition"])], **row}
+            for row in attribution_table(llm_rows, verdicts, keep_condition=lambda condition: condition in TEXT_CONDITIONS)]
+
+
+def length_bucket(question, lang):
+    word_count = len(words(normalize(question, lang)))
+    return LENGTH_BUCKETS[0] if word_count <= 7 else LENGTH_BUCKETS[1] if word_count <= 11 else LENGTH_BUCKETS[2]
+
+
+def length_table(llm_rows, verdicts):
+    """Correctness by gold-question length, for the gold text (oracle) and clean speech."""
+    groups = defaultdict(list)
+    for row in llm_rows:
+        if row["condition"] in (ORACLE, "clean"):
+            groups[(row["lang"], row["condition"], length_bucket(row["ref_question"], row["lang"]))].append(
+                is_correct(verdicts[(row["id"], row["condition"])]))
+    return [{"lang": lang, "condition": condition, "bucket": bucket, "n": len(correct_flags),
+             "correctness": sum(correct_flags) / len(correct_flags),
+             "correctness_ci": metrics.wilson_ci(sum(correct_flags), len(correct_flags))}
+            for (lang, condition, bucket), correct_flags in sorted(
+                groups.items(), key=lambda group: (*group[0][:2], LENGTH_BUCKETS.index(group[0][2])))]
+
+
 def question_wer(row):
     counts = metrics.edit_counts(words(normalize(row["ref_question"], row["lang"])),
                                  words(normalize(row["question"], row["lang"])))
@@ -163,7 +204,7 @@ def wer_bucket(question_error_rate):
 def wer_bucket_table(llm_rows, verdicts):
     bucket_correct = defaultdict(list)
     for row in llm_rows:
-        if row["condition"] != ORACLE:
+        if is_acoustic(row["condition"]):
             bucket_correct[wer_bucket(question_wer(row))].append(is_correct(verdicts[(row["id"], row["condition"])]))
     return [{"bucket": bucket, "n": len(bucket_correct[bucket]),
              "correctness": sum(bucket_correct[bucket]) / len(bucket_correct[bucket]) if bucket_correct[bucket] else None,
@@ -304,12 +345,16 @@ def qualitative_examples(llm_rows, verdicts, per_type=EXAMPLES_PER_TYPE):
     examples = {}
     for failure_type in (*FAILURE_TYPES, "ASR_INDUCED"):
         if failure_type == "ASR_INDUCED":
-            matching_rows = [row for row in llm_rows if row["condition"] != ORACLE
+            matching_rows = [row for row in llm_rows if is_acoustic(row["condition"])
                              and oracle_correct.get((row["lang"], row["id"]))
                              and not is_correct(verdicts[(row["id"], row["condition"])])]
         else:
             matching_rows = [row for row in llm_rows if verdicts[(row["id"], row["condition"])].label == failure_type]
         examples[failure_type] = matching_rows[:per_type]
+    for text_condition in sorted({row["condition"] for row in llm_rows} & set(TEXT_CONDITIONS),
+                                 key=TEXT_CONDITIONS.index):
+        examples[text_condition] = [row for row in llm_rows if row["condition"] == text_condition
+                                    and not is_correct(verdicts[(row["id"], row["condition"])])][:per_type]
     return examples
 
 
@@ -353,8 +398,11 @@ def setup_section(run_dir):
 def selection_section(selection_dir):
     if not list(Path(selection_dir).glob("*.json")):
         return "_LLM selection not run_\n"
-    from scripts.select_llm import load_results, summary_markdown
-    results = load_results(selection_dir, QUESTIONS_PATH)
+    from scripts.select_llm import StaleSelectionError, load_results, summary_markdown
+    try:
+        results = load_results(selection_dir, QUESTIONS_PATH)
+    except StaleSelectionError as stale_error:
+        return f"_LLM selection is stale: {stale_error}_\n"
     return summary_markdown(results).replace("# LLM selection\n", "", 1).replace("## ", "### ")
 
 
@@ -418,6 +466,14 @@ def build_report(run_dir, selection_dir, variance_dirs, audit_filled=None, laten
             "oracle_correctness", "delta_pp", "p_vs_oracle", "p_vs_clean")),
         "## Correctness by question WER\n", markdown_table(wer_bucket_table(llm_rows, verdicts),
                                                            ("bucket", "n", "correctness", "correctness_ci")),
+        "## Linguistic robustness\n",
+        "Gold question text perturbed, no ASR (see Metric definitions). Δ and p are against `oracle` on the same items; "
+        "`swap_anchor` and `wrong_passage` are unanswerable, so their correctness is abstention recall.\n\n",
+        markdown_table(linguistic_table(llm_rows, verdicts), (
+            "lang", "condition", "n", "correctness", "oracle_correctness", "delta_pp", "p_vs_oracle",
+            "answerable_accuracy", "abstention_recall", "false_abstain_rate", "hallucination_rate", "off_script_rate")),
+        "## Correctness by question length\n", markdown_table(length_table(llm_rows, verdicts), (
+            "lang", "condition", "bucket", "n", "correctness", "correctness_ci")),
         "## Latency\n",
         "Stages run in separate processes, so E2E is the sum of separately measured stages. Seconds unless noted. "
         "`throttled_requests`: server-side prompt speed below half the run's p90 (unthrottled) speed.\n\n",

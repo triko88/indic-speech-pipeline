@@ -35,7 +35,10 @@ data sources, abstain phrases and TTS voices. Add a table to try a language, com
 ```
 
 Each stage runs in its own process and exits before the next starts, so only one model is ever loaded. The gold-text
-`oracle` run of every QA item separates ASR-induced failures from LM failures.
+`oracle` run of every QA item separates ASR-induced failures from LM failures. Linguistic conditions skip ASR the same
+way: the gold question is perturbed syntactically (`scramble`, `drop_head`, `drop_tail`) or semantically
+(`swap_anchor`, `wrong_passage`, both unanswerable by construction) and scored against `oracle`
+(`indic_s2t/perturb.py`; `--text_conditions` with no names turns them off).
 
 ## Setup (Arch / Omarchy)
 

@@ -46,6 +46,47 @@ def test_p_vs_clean_for_degraded_condition():
     assert table["telephony"]["delta_pp"] == pytest.approx(-50.0)
 
 
+def linguistic_rows():
+    # scramble correct on q0 only (oracle: q0, q1); wrong_passage (unanswerable) abstains on q0, q1, answers q2, q3
+    scramble = [CORRECT, HALLUCINATED, HALLUCINATED, HALLUCINATED]
+    wrong_passage = [FALSE_ABSTAIN, FALSE_ABSTAIN, HALLUCINATED, HALLUCINATED]
+    return attribution_rows() + tuple(
+        llm_row(f"q{index}", "scramble", response, question="कहाँ ताजमहल है") for index, response in enumerate(scramble)
+    ) + tuple(llm_row(f"q{index}", "wrong_passage", response, answerable=False)
+              for index, response in enumerate(wrong_passage))
+
+
+def test_linguistic_table_compares_text_conditions_with_oracle():
+    rows = linguistic_rows()
+    verdicts = make_report.rule_verdicts(rows)
+    table = {row["condition"]: row for row in make_report.linguistic_table(rows, verdicts)}
+    assert set(table) == {"scramble", "wrong_passage"}
+    assert table["scramble"]["delta_pp"] == pytest.approx(-25.0)
+    assert table["scramble"]["oracle_correctness"] == pytest.approx(0.5)
+    assert table["wrong_passage"]["hallucination_rate"] == pytest.approx(0.5)
+    assert table["wrong_passage"]["abstention_recall"] == pytest.approx(0.5)
+
+
+def test_acoustic_only_tables_ignore_text_conditions():
+    rows = linguistic_rows()
+    verdicts = make_report.rule_verdicts(rows)
+    assert [row["condition"] for row in make_report.attribution_table(rows, verdicts)] == ["clean"]
+    assert sum(row["n"] for row in make_report.wer_bucket_table(rows, verdicts)) == 4  # the clean rows only
+    examples = make_report.qualitative_examples(rows, verdicts)
+    assert {row["condition"] for row in examples["ASR_INDUCED"]} == {"clean"}
+    assert [row["id"] for row in examples["scramble"]] == ["q1", "q2", "q3"]  # failures under each text condition
+
+
+def test_length_table_buckets_gold_question_words_for_oracle_and_clean():
+    short_question, long_question = "ताजमहल कहाँ है", "ताजमहल किस शहर में और किस नदी के उत्तरी किनारे पर स्थित है"  # 13 words
+    rows = tuple({**llm_row(f"q{index}", condition, response), "ref_question": question}
+                 for index, (question, response) in enumerate(((short_question, CORRECT), (long_question, HALLUCINATED)))
+                 for condition in ("oracle", "clean", "scramble"))
+    table = make_report.length_table(rows, make_report.rule_verdicts(rows))
+    assert [(row["condition"], row["bucket"], row["n"], row["correctness"]) for row in table] == [
+        ("clean", "3-7", 1, 1.0), ("clean", "12+", 1, 0.0), ("oracle", "3-7", 1, 1.0), ("oracle", "12+", 1, 0.0)]
+
+
 def test_wer_buckets():
     question_words = "एक दो तीन चार पाँच छह सात आठ नौ दस".split()
     one_wrong = " ".join(["गलत", *question_words[1:]])  # 10% WER
@@ -146,7 +187,8 @@ def test_report_builds_every_section_from_a_run_dir(tmp_path):
             "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in stage_rows), encoding="utf-8")
     report_text = make_report.build_report(run_dir, selection_dir=tmp_path / "missing", variance_dirs=())
     for heading in ("## Setup", "## Metric definitions", "## LLM selection", "## ASR", "## Spoken QA",
-                    "## Error attribution", "## Correctness by question WER", "## Latency", "## Variance",
+                    "## Error attribution", "## Correctness by question WER", "## Linguistic robustness",
+                    "## Correctness by question length", "## Latency", "## Variance",
                     "## Judge agreement", "## Human audit", "## Qualitative examples"):
         assert heading in report_text
     assert "limited validity" in report_text
@@ -179,3 +221,11 @@ def test_report_shows_latency_for_extra_runs(tmp_path):
     report_text = make_report.build_report(tmp_path / "main", selection_dir=tmp_path / "missing", variance_dirs=(),
                                            latency_runs=(tmp_path / "rerun",))
     assert "### Latency: main" in report_text and "### Latency: rerun" in report_text
+
+
+def test_stale_llm_selection_is_reported_not_fatal(tmp_path, monkeypatch):
+    from tests.test_select_llm import write_stale_selection
+    selection_dir, questions_path = write_stale_selection(tmp_path)
+    monkeypatch.setattr(make_report, "QUESTIONS_PATH", questions_path)
+    section_text = make_report.selection_section(selection_dir)
+    assert "stale" in section_text and "qa_ta_000" in section_text and "make select" in section_text

@@ -79,10 +79,21 @@ def relabel(result, questions_by_id):
     return {**result, "pilot_items": relabeled_items, "pilot": pilot_summary(relabeled_items)}
 
 
+class StaleSelectionError(ValueError):
+    pass
+
+
 def load_results(out_dir, questions_path):
+    """Stored results, re-scored. Raises StaleSelectionError when the pilot ran on questions the file no longer has
+    (e.g. a language dropped from languages.toml): those can't be re-scored, and the selection needs a rerun."""
     questions_by_id = {question["id"]: question for question in read_jsonl(questions_path)}
-    return tuple(relabel(json.loads(result_path.read_text(encoding="utf-8")), questions_by_id)
-                 for result_path in sorted(Path(out_dir).glob("*.json")))
+    results = tuple(json.loads(result_path.read_text(encoding="utf-8"))
+                    for result_path in sorted(Path(out_dir).glob("*.json")))
+    missing_ids = sorted({item["id"] for result in results for item in result["pilot_items"]} - set(questions_by_id))
+    if missing_ids:
+        raise StaleSelectionError(f"{out_dir} has pilot answers to {len(missing_ids)} questions missing from "
+                                  f"{questions_path} (e.g. {', '.join(missing_ids[:3])}): rerun `make select`")
+    return tuple(relabel(result, questions_by_id) for result in results)
 
 
 def recommend(results):

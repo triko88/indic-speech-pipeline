@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from scripts import select_llm
@@ -93,3 +95,24 @@ def test_relabel_recomputes_pilot_with_current_rules():
     assert relabeled["pilot_items"][0]["off_script"] is False
     assert relabeled["pilot"]["accuracy"] == 1.0
     assert stale_result["pilot_items"][0]["label"] == "WRONG_GROUNDED"  # input left untouched
+
+
+def write_stale_selection(tmp_path):
+    """A pilot run over a Tamil question that the current question file no longer has."""
+    selection_dir = tmp_path / "llm_selection"
+    selection_dir.mkdir()
+    pilot_item = {"id": "qa_ta_000", "lang": "ta", "answerable": True, "response": "x", "label": "CORRECT",
+                  "off_script": False, "verbose": False, "reasoning_text": "", "ttft_s": 0.5, "total_s": 1.0,
+                  "timings": {}}
+    (selection_dir / "A.json").write_text(json.dumps({"name": "A", "family": "gemma", "pilot_items": [pilot_item]}),
+                                          encoding="utf-8")
+    questions_path = tmp_path / "qa_questions.jsonl"
+    questions_path.write_text(json.dumps({"id": "qa_hi_000", "lang": "hi", "context": "c", "answers": ["a"],
+                                          "answerable": True}) + "\n", encoding="utf-8")
+    return selection_dir, questions_path
+
+
+def test_load_results_names_pilot_questions_missing_from_the_question_file(tmp_path):
+    selection_dir, questions_path = write_stale_selection(tmp_path)
+    with pytest.raises(select_llm.StaleSelectionError, match=r"qa_ta_000.*make select"):
+        select_llm.load_results(selection_dir, questions_path)

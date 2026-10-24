@@ -4,6 +4,9 @@
 
 Outputs (append-only, resumable, keyed by (id, condition)): <out>/asr.jsonl, llm.jsonl, judge.jsonl,
 plus sysinfo_<stage>.json. Metrics are computed later by make_report.py.
+
+Conditions: acoustic ones (--conditions) degrade the audio before ASR; linguistic ones (--text_conditions, see
+indic_s2t/perturb.py) perturb the gold question text and go to the LLM directly, like the `oracle` run.
 """
 
 import argparse
@@ -13,6 +16,8 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+
+from indic_s2t.perturb import TEXT_CONDITIONS, QaInput, perturb
 
 STAGES = ("asr", "llm", "judge")
 ORACLE = "oracle"
@@ -56,12 +61,14 @@ def select_items(items, limit):
     return tuple(selected)
 
 
-def work_keys(stage, items, conditions):
-    """ASR covers both tracks; LLM and judge cover QA items under every condition plus the gold-text oracle."""
+def work_keys(stage, items, conditions, text_conditions=()):
+    """ASR covers both tracks under the acoustic conditions; LLM and judge cover QA items under every acoustic
+    condition, the gold-text oracle and every text condition."""
     if stage == "asr":
         return tuple((item["id"], condition) for condition in conditions for item in items)
     qa_items = [item for item in items if item["track"] == "qa"]
-    return tuple((item["id"], condition) for condition in (*conditions, ORACLE) for item in qa_items)
+    return tuple((item["id"], condition) for condition in (*conditions, ORACLE, *text_conditions)
+                 for item in qa_items)
 
 
 def pending_keys(keys, out_path):
@@ -82,6 +89,14 @@ def run_pending(keys, process, out_path, warmup):
 
 def question_for(item, condition, asr_hypotheses):
     return item["ref_text"] if condition == ORACLE else asr_hypotheses[(item["id"], condition)]
+
+
+def qa_input_for(item, condition, asr_hypotheses, language_contexts):
+    """Question, passage and gold for one LLM call: perturbed gold text for a text condition, else the item's own."""
+    if condition in TEXT_CONDITIONS:
+        return perturb(item, condition, language_contexts)
+    return QaInput(question_for(item, condition, asr_hypotheses), item["context"], tuple(item["answers"]),
+                   item["answerable"])
 
 
 def judge_with_retry(call_judge, answerable):
@@ -124,7 +139,7 @@ def load_items(args):
 def stage_work_keys(args):
     if args.child_stage == "judge":
         return tuple((row["id"], row["condition"]) for row in read_jsonl(args.out / "llm.jsonl"))
-    return work_keys(args.child_stage, load_items(args), args.conditions)
+    return work_keys(args.child_stage, load_items(args), args.conditions, args.text_conditions)
 
 
 def asr_stage(args):
@@ -197,25 +212,31 @@ def llm_stage(args):
     items_by_id = {item["id"]: item for item in load_items(args)}
     asr_hypotheses = {(row["id"], row["condition"]): row["hyp"] for row in read_jsonl(args.out / "asr.jsonl")}
     asr_aware = not args.no_asr_aware_prompt
+    # Every passage of the full QA track, not just the --limit subset, so perturbations match the full run's.
+    contexts_by_lang = {}
+    for qa_row in read_jsonl(args.qa_track):
+        contexts_by_lang.setdefault(qa_row["lang"], set()).add(qa_row["context"])
+    contexts_by_lang = {lang: tuple(sorted(contexts)) for lang, contexts in contexts_by_lang.items()}
 
     with server_for(args, args.llm_gguf, "llm") as server_info:
         def process(key):
             item_id, condition = key
             item = items_by_id[item_id]
-            question = question_for(item, condition, asr_hypotheses)
-            completion = llm.stream_chat(server_info.base_url, llm.qa_messages(question, item["context"], item["lang"],
-                                                                                asr_aware), args.max_new_tokens)
-            return {"id": item_id, "condition": condition, "lang": item["lang"], "question": question,
-                    "ref_question": item["ref_text"], "context": item["context"], "answers": item["answers"],
-                    "answerable": item["answerable"], "response": completion.text,
+            qa_input = qa_input_for(item, condition, asr_hypotheses, contexts_by_lang[item["lang"]])
+            completion = llm.stream_chat(server_info.base_url, llm.qa_messages(qa_input.question, qa_input.context,
+                                                                                item["lang"], asr_aware),
+                                         args.max_new_tokens)
+            return {"id": item_id, "condition": condition, "lang": item["lang"], "question": qa_input.question,
+                    "ref_question": item["ref_text"], "context": qa_input.context, "answers": list(qa_input.answers),
+                    "answerable": qa_input.answerable, "response": completion.text,
                     "reasoning_text": completion.reasoning_text, "ttft_s": completion.ttft_s,
                     "total_s": completion.total_s, "timings": completion.timings,
                     "gpu": sysinfo.dgpu_state(dgpu_card_dir)}  # sampled right after the request, to spot throttling
 
         dgpu_card_dir = sysinfo.dgpu_card()
         out_path = args.out / "llm.jsonl"
-        count = run_pending(work_keys("llm", tuple(items_by_id.values()), args.conditions), process, out_path,
-                            args.warmup)
+        llm_keys = work_keys("llm", tuple(items_by_id.values()), args.conditions, args.text_conditions)
+        count = run_pending(llm_keys, process, out_path, args.warmup)
     print(f"llm: wrote {count} rows to {out_path}")
     reasoning_leaks = sum(bool(row["reasoning_text"]) for row in read_jsonl(out_path))
     if reasoning_leaks:
@@ -250,6 +271,8 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--stages", nargs="+", choices=STAGES, default=list(STAGES))
     parser.add_argument("--conditions", nargs="+", default=["clean", "babble_10db", "telephony"])
+    parser.add_argument("--text_conditions", nargs="*", choices=TEXT_CONDITIONS, default=list(TEXT_CONDITIONS),
+                        help="linguistic conditions on the gold question (LLM stage only); give none to skip them")
     parser.add_argument("--asr_decoding", choices=("rnnt", "ctc"), default="rnnt")
     parser.add_argument("--asr_threads", type=int, default=8)
     parser.add_argument("--llm_gguf", type=Path)
