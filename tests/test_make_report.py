@@ -160,9 +160,15 @@ def test_latency_flags_throttled_requests_and_gpu_state():
                      for index in range(8)) + tuple({**llm_row(f"s{index}", "oracle", CORRECT), "timings": slow_timings}
                                                     for index in range(2))
     table = {row["lang"]: row for row in make_report.latency_table((), llm_rows)}
-    assert table["hi"]["throttled_requests"] == 2  # server prompt speed < 50% of the run's median
+    assert table["hi"]["throttled_requests"] == 2  # server prompt speed < 50% of the run's p90 (unthrottled) speed
     assert table["hi"]["gpu_sclk_mhz_p50"] == pytest.approx(2600.0)
     assert table["hi"]["gpu_junction_c_max"] == pytest.approx(87.0)
+    assert table["hi"]["ttft_p50_unthrottled"] == pytest.approx(0.2)
+
+    # most requests throttled: the median is itself slow, so the reference must be the unthrottled p90
+    mostly_slow = llm_rows[:2] + tuple({**llm_row(f"m{index}", "oracle", CORRECT), "timings": slow_timings}
+                                       for index in range(8))
+    assert make_report.latency_table((), mostly_slow)[0]["throttled_requests"] == 8
 
 
 def test_report_shows_latency_for_extra_runs(tmp_path):

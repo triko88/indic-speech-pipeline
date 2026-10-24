@@ -175,11 +175,12 @@ def tokens_per_second(token_count, milliseconds):
     return token_count / milliseconds * 1000 if token_count and milliseconds else None
 
 
-def throttled_count(prompt_speeds):
-    """Requests whose server-side prompt speed fell below half the median: GPU clocked down, not prompt length."""
+def throttled_flags(prompt_speeds):
+    """True where server-side prompt speed fell below half the run's p90 (unthrottled) speed: the GPU clocked down.
+    The reference is p90, not the median, because a hot run can spend most of its requests throttled."""
     present_speeds = [speed for speed in prompt_speeds if speed is not None]
-    median_speed = percentile(present_speeds, 50)
-    return sum(speed < 0.5 * median_speed for speed in present_speeds) if present_speeds else 0
+    reference_speed = percentile(present_speeds, 90)
+    return [speed is not None and speed < 0.5 * reference_speed for speed in prompt_speeds]
 
 
 def gpu_values(llm_rows, field):
@@ -217,7 +218,9 @@ def latency_table(asr_rows, llm_rows):
                                                          if row["ttft_s"] is not None], 95),
             "e2e_p50": percentile([asr["asr_s"] + row["total_s"] for asr, row in joined], 50),
             "e2e_p95": percentile([asr["asr_s"] + row["total_s"] for asr, row in joined], 95),
-            "throttled_requests": throttled_count(prompt_speeds),
+            "throttled_requests": sum(throttled_flags(prompt_speeds)),
+            "ttft_p50_unthrottled": percentile([row["ttft_s"] for row, throttled in zip(lang_llm, throttled_flags(prompt_speeds))
+                                                if not throttled], 50),
             "gpu_sclk_mhz_p50": percentile(gpu_values(lang_llm, "sclk_mhz"), 50),
             "gpu_junction_c_max": max(gpu_values(lang_llm, "junction_c"), default=None),
         })
@@ -369,7 +372,7 @@ def examples_section(examples):
 LATENCY_COLUMNS = ("lang", "asr_s_p50", "asr_s_p95", "asr_rtf", "asr_rtf_p95", "ttft_p50", "ttft_p95", "llm_total_p50",
                    "llm_total_p95", "prompt_tok_s_p50", "decode_tok_s_p50", "prompt_tokens_p50", "output_tokens_p50",
                    "speech_end_to_first_token_p50", "speech_end_to_first_token_p95", "e2e_p50", "e2e_p95",
-                   "throttled_requests", "gpu_sclk_mhz_p50", "gpu_junction_c_max")
+                   "throttled_requests", "ttft_p50_unthrottled", "gpu_sclk_mhz_p50", "gpu_junction_c_max")
 
 
 def latency_section(run_dirs):
@@ -417,7 +420,7 @@ def build_report(run_dir, selection_dir, variance_dirs, audit_filled=None, laten
                                                            ("bucket", "n", "correctness", "correctness_ci")),
         "## Latency\n",
         "Stages run in separate processes, so E2E is the sum of separately measured stages. Seconds unless noted. "
-        "`throttled_requests`: server-side prompt speed below half the run's median.\n\n",
+        "`throttled_requests`: server-side prompt speed below half the run's p90 (unthrottled) speed.\n\n",
         latency_section((run_dir, *latency_runs)),
         "## Variance\n", markdown_table(variance_table(variance_dirs), ("lang", "metric", "runs", "mean", "spread_pct"))
         if variance_dirs else "_variance runs not provided_\n",
