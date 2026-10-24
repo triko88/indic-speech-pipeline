@@ -7,10 +7,10 @@ from scripts import run_eval
 ITEMS = (
     {"id": "hi_000", "track": "asr", "lang": "hi", "ref_text": "a"},
     {"id": "hi_001", "track": "asr", "lang": "hi", "ref_text": "b"},
-    {"id": "ta_000", "track": "asr", "lang": "ta", "ref_text": "c"},
+    {"id": "en_000", "track": "asr", "lang": "en", "ref_text": "c"},
     {"id": "qa_hi_000", "track": "qa", "lang": "hi", "ref_text": "प्रश्न एक"},
     {"id": "qa_hi_001", "track": "qa", "lang": "hi", "ref_text": "प्रश्न दो"},
-    {"id": "qa_ta_000", "track": "qa", "lang": "ta", "ref_text": "கேள்வி"},
+    {"id": "qa_en_000", "track": "qa", "lang": "en", "ref_text": "question"},
 )
 
 
@@ -20,7 +20,7 @@ def write_jsonl(path, rows):
 
 def test_select_items_limits_per_track_and_language_in_order():
     selected_ids = [item["id"] for item in run_eval.select_items(ITEMS, limit=1)]
-    assert selected_ids == ["hi_000", "ta_000", "qa_hi_000", "qa_ta_000"]
+    assert selected_ids == ["hi_000", "en_000", "qa_hi_000", "qa_en_000"]
     assert run_eval.select_items(ITEMS, limit=None) == ITEMS
 
 
@@ -29,7 +29,7 @@ def test_work_keys_per_stage():
     asr_keys = run_eval.work_keys("asr", ITEMS, conditions)
     assert len(asr_keys) == len(ITEMS) * 2 and ("hi_000", "telephony") in asr_keys
     llm_keys = run_eval.work_keys("llm", ITEMS, conditions)
-    assert set(llm_keys) == {(item_id, condition) for item_id in ("qa_hi_000", "qa_hi_001", "qa_ta_000")
+    assert set(llm_keys) == {(item_id, condition) for item_id in ("qa_hi_000", "qa_hi_001", "qa_en_000")
                              for condition in ("clean", "telephony", "oracle")}
     assert run_eval.work_keys("judge", ITEMS, conditions) == llm_keys
 
@@ -37,7 +37,7 @@ def test_work_keys_per_stage():
 def test_run_pending_resumes_and_excludes_warmup(tmp_path):
     out_path = tmp_path / "asr.jsonl"
     write_jsonl(out_path, [{"id": "hi_000", "condition": "clean", "hyp": "done earlier"}])
-    keys = (("hi_000", "clean"), ("hi_001", "clean"), ("ta_000", "clean"))
+    keys = (("hi_000", "clean"), ("hi_001", "clean"), ("en_000", "clean"))
     processed_keys = []
 
     def process(key):
@@ -47,7 +47,7 @@ def test_run_pending_resumes_and_excludes_warmup(tmp_path):
     written_count = run_eval.run_pending(keys, process, out_path, warmup=2)
     assert written_count == 2
     # two warm-up calls on the first pending key, then each pending key once; warm-ups are never written
-    assert processed_keys == [("hi_001", "clean")] * 2 + [("hi_001", "clean"), ("ta_000", "clean")]
+    assert processed_keys == [("hi_001", "clean")] * 2 + [("hi_001", "clean"), ("en_000", "clean")]
     rows = run_eval.read_jsonl(out_path)
     assert [(row["id"], row["condition"]) for row in rows] == list(keys)
 

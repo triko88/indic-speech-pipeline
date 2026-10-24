@@ -19,7 +19,10 @@ requirements:
 	uv export --quiet --no-hashes --no-dev -o requirements.txt
 	uv export --quiet --no-hashes --project tts -o requirements-tts.txt
 
+# Also loads every languages.toml asr_model once, so later offline runs (test-hw, demo, app) find them cached.
 data:
+	$(PY) -c "from indic_s2t import asr, languages; \
+		asr.load_asr_models(language.asr_model for language in languages.LANGUAGES.values())"
 	$(PY) scripts/prepare_data.py --stage asr
 	$(PY) scripts/prepare_data.py --stage qa
 	$(PY) scripts/prepare_data.py --stage examples
@@ -48,7 +51,7 @@ smoke:
 eval:
 	$(PY) scripts/run_eval.py $(EVAL_ARGS) --out runs/main
 
-# Same 20-item clean subset (5 per track x language), three fresh runs.
+# Same clean subset (5 per track x language), three fresh runs.
 variance:
 	for run_index in 1 2 3; do $(PY) scripts/run_eval.py $(EVAL_ARGS) --stages asr llm --limit 5 --conditions clean --out runs/var_$$run_index --force || exit 1; done
 

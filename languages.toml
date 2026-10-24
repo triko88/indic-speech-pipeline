@@ -1,0 +1,50 @@
+# Every table is an active language: add one to experiment, comment one out to drop it.
+# Keys (all but name/script_block/asr_model optional):
+#   name             language name used in LLM prompts and the judge
+#   script_block     [first, last] code point of the language's Unicode block (off-script checks, QA filter)
+#   indicnlp         true -> indic-nlp normaliser (nasal unification, nukta); leave out for non-Indic scripts
+#   asr_model        HF id: ai4bharat/indic-conformer-600m-multilingual, or any Whisper checkpoint
+#   kathbath|fleurs  ASR-track source: Kathbath directory name, or FLEURS config
+#   indicqa|squad_url  QA source: IndicQA file code, or a SQuAD-format JSON URL (file:// works)
+#   abstain_phrases  substrings that mark a response as an abstention
+#   tts_speakers     [female, male] Indic Parler-TTS speaker names for the QA audio
+
+[hi]
+name = "Hindi"
+script_block = [0x0900, 0x097F]
+indicnlp = true
+asr_model = "ai4bharat/indic-conformer-600m-multilingual"
+kathbath = "hindi"
+indicqa = "hi"
+abstain_phrases = ["no answer", "उत्तर नहीं", "जवाब नहीं", "जानकारी नहीं", "उल्लेख नहीं", "नहीं दिया गया", "पता नहीं"]
+# Model-card recommended speakers.
+tts_speakers = ["Divya", "Rohit"]
+
+[en]
+name = "English"
+script_block = [0x0041, 0x007A]
+asr_model = "openai/whisper-small"
+fleurs = "en_us"
+squad_url = "https://rajpurkar.github.io/SQuAD-explorer/dataset/dev-v2.0.json"
+abstain_phrases = ["no answer", "not mentioned", "not stated", "does not contain", "not provided", "cannot be determined"]
+tts_speakers = ["Mary", "Thoma"]
+
+[sa]
+name = "Sanskrit"
+script_block = [0x0900, 0x097F]
+indicnlp = true
+asr_model = "ai4bharat/indic-conformer-600m-multilingual"
+kathbath = "sanskrit"
+# No QA source yet (IndicQA has no Sanskrit): ASR track only. Extend the phrases when adding a squad_url.
+abstain_phrases = ["no answer"]
+
+# [ta]
+# name = "Tamil"
+# script_block = [0x0B80, 0x0BFF]
+# indicnlp = true
+# asr_model = "ai4bharat/indic-conformer-600m-multilingual"
+# kathbath = "tamil"
+# indicqa = "ta"
+# abstain_phrases = ["no answer", "பதில் இல்லை", "தகவல் இல்லை", "குறிப்பிடப்படவில்லை", "தெரியவில்லை", "கொடுக்கப்படவில்லை"]
+# # The model card lists only female Jaya/Kavitha, so the male voice is generic.
+# tts_speakers = ["Jaya", "A male speaker"]

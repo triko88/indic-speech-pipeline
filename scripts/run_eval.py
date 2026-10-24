@@ -133,16 +133,22 @@ def asr_stage(args):
     import numpy as np
     import torch
 
-    from indic_s2t.asr import load_asr, transcribe
+    from indic_s2t.asr import WhisperAsr, load_asr_models, transcribe
     from indic_s2t.audio import BabbleSource, apply_condition, load_16k_mono
+    from indic_s2t.languages import LANGUAGES
 
     items_by_id = {item["id"]: item for item in load_items(args)}
     babble_pools = {}
     for babble_row in read_jsonl(args.babble_pool):
         babble_pools.setdefault(babble_row["lang"], []).append(
             BabbleSource(babble_row["utt_id"], babble_row["speaker_id"], load_16k_mono(babble_row["audio"])))
-    model, asr_info = load_asr(args.asr_threads)
-    print(asr_info, f"torch threads {torch.get_num_threads()}", flush=True)
+    loaded_models = load_asr_models(tuple(LANGUAGES[item["lang"]].asr_model for item in items_by_id.values()),
+                                    args.asr_threads)
+    # ponytail: --warmup re-runs only the first pending key, so only that item's model is warmed; the first item of
+    # each other model carries its cold start. Warm one key per model if that skews the latency tails.
+    for model_id, (_, asr_info) in loaded_models.items():
+        print(model_id, asr_info, flush=True)
+    print(f"torch threads {torch.get_num_threads()}", flush=True)
     clean_waves = {}
 
     def process(key):
@@ -154,18 +160,22 @@ def asr_stage(args):
         degraded_wave = apply_condition(clean_waves[item_id], condition, item_id,
                                         tuple(babble_pools.get(item["lang"], ())),
                                         item.get("meta", {}).get("speaker_id"))
+        model_id = LANGUAGES[item["lang"]].asr_model
+        model = loaded_models[model_id][0]
         start = time.perf_counter()
         hypothesis = transcribe(model, degraded_wave, item["lang"], args.asr_decoding)
         asr_seconds = time.perf_counter() - start
         return {"id": item_id, "condition": condition, "track": item["track"], "lang": item["lang"],
                 "ref_text": item["ref_text"], "hyp": hypothesis, "asr_s": asr_seconds,
-                "audio_s": len(degraded_wave) / 16000, "decoding": args.asr_decoding,
+                "audio_s": len(degraded_wave) / 16000, "asr_model": model_id,
+                "decoding": "whisper-greedy" if isinstance(model, WhisperAsr) else args.asr_decoding,
                 "peak_abs": float(np.abs(degraded_wave).max())}
 
     out_path = args.out / "asr.jsonl"
     count = run_pending(work_keys("asr", tuple(items_by_id.values()), args.conditions), process, out_path, args.warmup)
     print(f"asr: wrote {count} rows to {out_path}")
-    write_stage_info(args, "asr", {"asr_info": dataclasses.asdict(asr_info), "torch_threads": torch.get_num_threads()})
+    asr_infos = {model_id: dataclasses.asdict(asr_info) for model_id, (_, asr_info) in loaded_models.items()}
+    write_stage_info(args, "asr", {"asr_info": asr_infos, "torch_threads": torch.get_num_threads()})
 
 
 def server_for(args, gguf, stage_name):

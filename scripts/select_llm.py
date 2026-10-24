@@ -15,7 +15,6 @@ from indic_s2t import llamacpp_server, llm, sysinfo
 
 ANSWERER_CANDIDATES = ("A", "B")
 CORRECT_LABELS = ("CORRECT", "CORRECT_ABSTAIN")
-LANGS = ("hi", "ta")
 CTX_SIZE = 4096
 ANSWER_MAX_TOKENS = 96
 FERTILITY_PASSAGES_PER_LANG = 20
@@ -27,13 +26,18 @@ def fertility(token_counts, char_counts):
     return sum(token_counts) / sum(char_counts)
 
 
+def languages_in(rows):
+    """Distinct `lang` values in first-seen order: only languages with QA questions get pilot/fertility columns."""
+    return tuple(dict.fromkeys(row["lang"] for row in rows))
+
+
 def fertility_passages(questions, lang, limit):
     unique_contexts = dict.fromkeys(question["context"] for question in questions if question["lang"] == lang)
     return tuple(unique_contexts)[:limit]
 
 
 def pilot_questions(questions, per_lang):
-    selected_ids = {question["id"] for lang in LANGS
+    selected_ids = {question["id"] for lang in languages_in(questions)
                     for question in [question for question in questions if question["lang"] == lang][:per_lang]}
     return tuple(question for question in questions if question["id"] in selected_ids)
 
@@ -51,7 +55,8 @@ def pilot_summary(pilot_items):
     return {
         "n": len(pilot_items),
         "accuracy": accuracy(pilot_items),
-        "accuracy_by_lang": {lang: accuracy([item for item in pilot_items if item["lang"] == lang]) for lang in LANGS},
+        "accuracy_by_lang": {lang: accuracy([item for item in pilot_items if item["lang"] == lang])
+                             for lang in languages_in(pilot_items)},
         "off_script_rate": sum(item["off_script"] for item in pilot_items) / len(pilot_items),
         "reasoning_leak_count": sum(bool(item["reasoning_text"]) for item in pilot_items),
         "median_ttft_s": median_or_none(item["ttft_s"] for item in pilot_items),
@@ -99,8 +104,11 @@ def formatted(value, digits=2):
 
 def summary_markdown(results):
     answerer, judge = recommend(results)
-    header = ("| Candidate | Family | Load s | VRAM +MiB | Max prompt tok (fits) | Pilot acc | acc hi / ta | Off-script "
-              "| Reasoning leaks | Median TTFT s | Median latency s | Prompt tok/s | Decode tok/s |\n"
+    accuracy_langs = tuple(dict.fromkeys(lang for result in results
+                                         for lang in result["pilot"].get("accuracy_by_lang", {})))
+    fertility_langs = tuple(dict.fromkeys(lang for result in results for lang in result.get("fertility", {})))
+    header = ("| Candidate | Family | Load s | VRAM +MiB | Max prompt tok (fits) | Pilot acc "
+              f"| acc {' / '.join(accuracy_langs)} | Off-script | Reasoning leaks | Median TTFT s | Median latency s | Prompt tok/s | Decode tok/s |\n"
               "|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     rows = []
     for result in sorted(results, key=lambda result: result["name"]):
@@ -110,17 +118,18 @@ def summary_markdown(results):
             f"| {result['name']} | {result['family']} | {formatted(server.get('load_seconds'), 1)} "
             f"| {formatted(server.get('vram_delta_mib'))} "
             f"| {formatted(context_fit.get('max_prompt_tokens'))} ({formatted(context_fit.get('fits'))}) "
-            f"| {formatted(pilot['accuracy'])} | {formatted(by_lang.get('hi'))} / {formatted(by_lang.get('ta'))} "
+            f"| {formatted(pilot['accuracy'])} | {' / '.join(formatted(by_lang.get(lang)) for lang in accuracy_langs)} "
             f"| {formatted(pilot.get('off_script_rate'))} | {formatted(pilot.get('reasoning_leak_count'))} "
             f"| {formatted(pilot.get('median_ttft_s'))} | {formatted(pilot['median_latency_s'])} "
             f"| {formatted(pilot.get('median_prompt_tok_s'), 0)} | {formatted(pilot.get('median_decode_tok_s'), 1)} |")
-    fertility_rows = [f"| {result['name']} | {formatted(result.get('fertility', {}).get('hi'), 3)} "
-                      f"| {formatted(result.get('fertility', {}).get('ta'), 3)} |"
+    fertility_rows = ["| " + " | ".join((result["name"], *(formatted(result.get("fertility", {}).get(lang), 3)
+                                                            for lang in fertility_langs))) + " |"
                       for result in sorted(results, key=lambda result: result["name"])]
     return "\n".join([
         "# LLM selection", "", header, *rows, "",
         "## Tokenizer fertility (tokens per character, lower is better)", "",
-        "| Candidate | hi | ta |", "|---|---|---|", *fertility_rows, "",
+        "| " + " | ".join(("Candidate", *fertility_langs)) + " |", "|---" * (len(fertility_langs) + 1) + "|",
+        *fertility_rows, "",
         "## Recommendation", "",
         f"Answerer: **{answerer}** (best pilot accuracy among {'/'.join(ANSWERER_CANDIDATES)}, "
         f"tie-break lower median latency).",
@@ -164,7 +173,8 @@ def evaluate_candidate(args):
                                         extra_args=tuple(shlex.split(args.extra_args)),
                                         log_path=args.out / f"{args.name}.server.log") as server_info:
         base_url = server_info.base_url
-        passages_by_lang = {lang: fertility_passages(questions, lang, FERTILITY_PASSAGES_PER_LANG) for lang in LANGS}
+        passages_by_lang = {lang: fertility_passages(questions, lang, FERTILITY_PASSAGES_PER_LANG)
+                            for lang in languages_in(questions)}
         fertility_by_lang = {lang: fertility([len(llm.tokenize(base_url, passage)) for passage in passages],
                                              [len(passage) for passage in passages])
                              for lang, passages in passages_by_lang.items()}

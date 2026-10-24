@@ -40,10 +40,10 @@ def test_oracle_and_asr_prompts_differ_only_in_question():
 
 
 def test_system_prompt_requires_no_answer_and_language():
-    system_prompt = llm.qa_messages("கேள்வி?", "பத்தி", "ta")[0]["content"]
+    system_prompt = llm.qa_messages("Where is it?", "A passage.", "en")[0]["content"]
     assert "exactly NO_ANSWER" in system_prompt
     assert "ONLY" in system_prompt
-    assert "Tamil" in system_prompt
+    assert "English" in system_prompt
     assert "speech recognition" in system_prompt
 
 

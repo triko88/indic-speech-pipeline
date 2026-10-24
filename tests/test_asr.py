@@ -1,15 +1,17 @@
-import unicodedata
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import onnxruntime
 import pytest
+import torch
 
 from indic_s2t import asr
 from indic_s2t.audio import load_16k_mono
+from indic_s2t.languages import LANGUAGES
+from indic_s2t.textnorm import script_letter_share
 
 ASR_DIR = Path(__file__).resolve().parent.parent / "data" / "asr"
-SCRIPT_BLOCKS = {"hi": (0x0900, 0x097F), "ta": (0x0B80, 0x0BFF)}
 
 
 class FakeSession:
@@ -92,28 +94,57 @@ def test_summarize_sessions_reports_providers_and_threads(fake_onnxruntime):
                                    injection="test")
 
 
-def script_fraction(transcript, lang):
-    """Share of letters/marks in the transcript that fall in the language's Unicode block."""
-    block_start, block_end = SCRIPT_BLOCKS[lang]
-    script_chars = [char for char in transcript if unicodedata.category(char)[0] in "LM"]
-    return sum(block_start <= ord(char) <= block_end for char in script_chars) / max(len(script_chars), 1)
+class FakeWhisperProcessor:
+    def __call__(self, wave, sampling_rate, return_tensors):
+        assert sampling_rate == 16000 and return_tensors == "pt"
+        return SimpleNamespace(input_features=torch.zeros(1, 80, 3000))
+
+    def batch_decode(self, token_ids, skip_special_tokens):
+        assert skip_special_tokens
+        return [" The Taj Mahal is in Agra. "]
+
+
+class FakeWhisperModel:
+    def __init__(self):
+        self.generate_kwargs = None
+
+    def generate(self, input_features, **kwargs):
+        self.generate_kwargs = kwargs
+        return torch.zeros(1, 4, dtype=torch.long)
+
+
+def test_whisper_transcribe_forces_language_and_task():
+    fake_model = FakeWhisperModel()
+    whisper = asr.WhisperAsr(FakeWhisperProcessor(), fake_model)
+    assert asr.transcribe(whisper, np.zeros(16000, dtype=np.float32), "en") == "The Taj Mahal is in Agra."
+    assert fake_model.generate_kwargs == {"language": "en", "task": "transcribe"}
+
+
+def test_load_asr_models_loads_each_distinct_model_once(monkeypatch):
+    load_calls = []
+    monkeypatch.setattr(asr, "load_whisper", lambda model_id, threads: load_calls.append(("whisper", model_id)) or "W")
+    monkeypatch.setattr(asr, "load_asr", lambda threads, model_id: load_calls.append(("conformer", model_id)) or "C")
+    loaded_models = asr.load_asr_models(("openai/whisper-small", asr.MODEL_ID, "openai/whisper-small"), threads=8)
+    assert dict(loaded_models) == {"openai/whisper-small": "W", asr.MODEL_ID: "C"}
+    assert load_calls == [("whisper", "openai/whisper-small"), ("conformer", asr.MODEL_ID)]
 
 
 @pytest.fixture(scope="module")
-def loaded_asr():
-    return asr.load_asr(threads=8)
+def loaded_asr_models():
+    return asr.load_asr_models(tuple(language.asr_model for language in LANGUAGES.values()), threads=8)
 
 
 @pytest.mark.hw
-@pytest.mark.parametrize("lang", ["hi", "ta"])
-def test_transcribe_real_wavs(loaded_asr, lang):
+@pytest.mark.parametrize("lang", tuple(LANGUAGES))
+def test_transcribe_real_wavs(loaded_asr_models, lang):
     wav_paths = sorted(set(ASR_DIR.glob(f"{lang}/*.wav")) | set(ASR_DIR.glob(f"{lang}_*.wav")))[:2]
     if len(wav_paths) < 2:
         pytest.skip(f"need 2 wavs in {ASR_DIR}/{lang}/ or {ASR_DIR}/{lang}_*.wav")
-    model, asr_info = loaded_asr
-    assert asr_info.providers == ("CPUExecutionProvider",)
+    model, asr_info = loaded_asr_models[LANGUAGES[lang].asr_model]
     assert asr_info.threads == (8,)
+    if not isinstance(model, asr.WhisperAsr):
+        assert asr_info.providers == ("CPUExecutionProvider",)
     for wav_path in wav_paths:
         transcript = asr.transcribe(model, load_16k_mono(wav_path), lang)
         assert transcript.strip(), wav_path
-        assert script_fraction(transcript, lang) > 0.8, (wav_path, transcript)
+        assert script_letter_share(transcript, lang) > 0.8, (wav_path, transcript)

@@ -7,22 +7,17 @@ from dataclasses import dataclass
 
 import regex
 
+from indic_s2t.languages import LANGUAGES
 from indic_s2t.metrics import wilson_ci
 from indic_s2t.textnorm import aksharas, normalize, script_letter_share, words
 
 NO_ANSWER = "NO_ANSWER"
-# ponytail: fixed phrase lists; a response that merely contains one of these is treated as an abstention.
-ABSTAIN_PHRASES = {
-    "hi": ("no answer", "उत्तर नहीं", "जवाब नहीं", "जानकारी नहीं", "उल्लेख नहीं", "नहीं दिया गया", "पता नहीं"),
-    "ta": ("no answer", "பதில் இல்லை", "தகவல் இல்லை", "குறிப்பிடப்படவில்லை", "தெரியவில்லை", "கொடுக்கப்படவில்லை"),
-}
 MIN_GOLD_AKSHARAS = 2
 F1_THRESHOLD = 0.5
 SUPPORT_THRESHOLD = 0.6
 SUPPORT_PREFIX_SHARE = 0.7
 VERBOSE_TOKENS = 25
 SCRIPT_SHARE_THRESHOLD = 0.5
-LANGUAGE_NAMES = {"hi": "Hindi", "ta": "Tamil"}
 
 
 @dataclass(frozen=True)
@@ -34,9 +29,10 @@ class Verdict:
 
 
 def is_abstention(response, lang):
+    # ponytail: fixed phrase lists (languages.toml); a response that merely contains one counts as an abstention.
     normalized_response = normalize(response, lang)
     return NO_ANSWER in response.upper() or any(
-        normalize(phrase, lang) in normalized_response for phrase in ABSTAIN_PHRASES[lang])
+        normalize(phrase, lang) in normalized_response for phrase in LANGUAGES[lang].abstain_phrases)
 
 
 def token_f1(normalized_gold, normalized_response):
@@ -137,7 +133,7 @@ def judge_messages(context, question, gold_answers, response, lang, strict=False
                     f"Gold answers: {json.dumps(list(gold_answers), ensure_ascii=False)}\n\nResponse:\n{response}")
     if strict:
         user_content += f"\n\n{JUDGE_STRICT_REMINDER}"
-    return ({"role": "system", "content": JUDGE_SYSTEM_PROMPT.format(language=LANGUAGE_NAMES[lang])},
+    return ({"role": "system", "content": JUDGE_SYSTEM_PROMPT.format(language=LANGUAGES[lang].name)},
             {"role": "user", "content": user_content})
 
 

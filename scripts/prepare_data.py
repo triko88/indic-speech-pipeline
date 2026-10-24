@@ -1,4 +1,6 @@
-"""Build the evaluation data: ASR track (Kathbath), QA questions (IndicQA), QA audio (TTS) and condition examples.
+"""Build the evaluation data: ASR track (Kathbath/FLEURS), QA questions (IndicQA/SQuAD), QA audio (TTS), examples.
+
+Which languages, and which source each one uses, comes from languages.toml.
 
     PYTHONPATH=. uv run python scripts/prepare_data.py --stage asr|qa|examples
     PYTHONPATH=. uv run --project tts python scripts/prepare_data.py --stage tts
@@ -18,7 +20,8 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-LANG_NAMES = {"hi": "hindi", "ta": "tamil"}
+from indic_s2t.languages import LANGUAGES
+
 SAMPLE_RATE = 16000
 
 # Kathbath's HF repo only carries train/valid; the test sets are AI4Bharat's tar downloads (IndicSUPERB README).
@@ -28,6 +31,8 @@ KATHBATH_SPLITS = {  # split -> (audio tar, directory inside the tars)
     "test_known": ("testkn_audio.tar", "test_known"),
     "valid": ("valid_audio.tar", "valid"),
 }
+FLEURS_URL = "https://huggingface.co/datasets/google/fleurs/resolve/main/data"
+FLEURS_SPLIT = "test"
 ASR_PER_LANG = 50
 BABBLE_PER_LANG = 20
 MIN_SECONDS, MAX_SECONDS = 1.0, 20.0
@@ -44,8 +49,6 @@ TTS_MAX_ATTEMPTS = 3
 TTS_MIN_SECONDS = 0.8
 TTS_MIN_CHARS_PER_SECOND, TTS_MAX_CHARS_PER_SECOND = 4.0, 30.0
 ETA_WINDOW = 10
-# Model-card speakers (Hindi: Rohit, Divya recommended; Tamil lists only female Jaya/Kavitha, so male is generic).
-TTS_SPEAKERS = {"hi": ("Divya", "Rohit"), "ta": ("Jaya", "A male speaker")}
 TTS_PACES = ("a normal", "a slightly fast")
 
 EXAMPLE_CONDITIONS = ("clean", "babble_10db", "telephony")
@@ -77,10 +80,10 @@ def stable_seed(*parts):
     return int.from_bytes(hashlib.sha256("|".join(map(str, parts)).encode("utf-8")).digest()[:4], "little")
 
 
-# ---------- asr stage (Kathbath) ----------
+# ---------- asr stage (Kathbath, FLEURS) ----------
 
 @dataclass(frozen=True)
-class KathbathUtterance:
+class Utterance:
     fname: str
     text: str
     speaker_id: str
@@ -93,9 +96,9 @@ def kathbath_speaker_id(fname):
     return Path(fname).stem.split("-")[1]
 
 
-def asr_row(lang, index, audio_path, duration, ref_text, split, meta):
+def asr_row(lang, index, audio_path, duration, ref_text, source, meta):
     return {"id": f"{lang}_{index:03d}", "track": "asr", "lang": lang, "audio": str(audio_path),
-            "duration": round(duration, 3), "ref_text": ref_text, "source": f"kathbath/{split}", "meta": meta}
+            "duration": round(duration, 3), "ref_text": ref_text, "source": source, "meta": meta}
 
 
 def download(url, path):
@@ -123,25 +126,24 @@ def print_hf_kathbath_layout():
 
 
 def read_kathbath_transcripts(transcripts_tar, lang, split_dir, audio_root):
-    member_name = f"kb_data_clean_m4a/{LANG_NAMES[lang]}/{split_dir}/transcription_n2w.txt"
+    member_name = f"kb_data_clean_m4a/{LANGUAGES[lang].kathbath}/{split_dir}/transcription_n2w.txt"
     with tarfile.open(transcripts_tar) as tar:
         transcript_text = tar.extractfile(member_name).read().decode("utf-8")
     fields = [line.split("\t", 1) for line in transcript_text.splitlines() if line.strip()]
     print(f"[{lang}] {member_name}: {len(fields)} rows, columns = (fname, text) tab-separated; "
           f"speaker/gender parsed from fname", flush=True)
-    return tuple(KathbathUtterance(fname, text.strip(), kathbath_speaker_id(fname), Path(fname).stem.split("-")[2],
-                                   audio_root / LANG_NAMES[lang] / fname)
+    return tuple(Utterance(fname, text.strip(), kathbath_speaker_id(fname), Path(fname).stem.split("-")[2],
+                           audio_root / LANGUAGES[lang].kathbath / fname)
                  for fname, text in fields)
 
 
-def stream_kathbath_audio(audio_tar_url, split_dir, wanted_paths):
-    """Stream the audio tar once over HTTP, keeping only the wanted m4a files (no tar on disk)."""
-    missing_names = {f"kb_data_clean_m4a/{path.parent.name}/{split_dir}/audio/{path.name}": path
-                     for path in wanted_paths if not path.exists()}
+def stream_tar_members(tar_url, member_paths, mode="r|"):
+    """Stream a tar once over HTTP, writing only the wanted members (member name -> target path); no tar on disk."""
+    missing_names = {member_name: path for member_name, path in member_paths.items() if not path.exists()}
     if not missing_names:
         return
-    print(f"streaming {audio_tar_url} for {len(missing_names)} files", flush=True)
-    with urllib.request.urlopen(audio_tar_url) as response, tarfile.open(fileobj=response, mode="r|") as tar:
+    print(f"streaming {tar_url} for {len(missing_names)} files", flush=True)
+    with urllib.request.urlopen(tar_url) as response, tarfile.open(fileobj=response, mode=mode) as tar:
         for member_index, member in enumerate(tar):
             target_path = missing_names.pop(member.name, None)
             if target_path is not None:
@@ -154,7 +156,47 @@ def stream_kathbath_audio(audio_tar_url, split_dir, wanted_paths):
             if not missing_names:
                 break
     if missing_names:
-        raise RuntimeError(f"{len(missing_names)} files not found in {audio_tar_url}, e.g. {next(iter(missing_names))}")
+        raise RuntimeError(f"{len(missing_names)} files not found in {tar_url}, e.g. {next(iter(missing_names))}")
+
+
+def kathbath_utterances(raw_dir, split):
+    """lang -> utterances for every language with a `kathbath` directory; one pass over the shared audio tar."""
+    kathbath_langs = tuple(lang for lang, language in LANGUAGES.items() if language.kathbath)
+    if not kathbath_langs:
+        return {}
+    print_hf_kathbath_layout()
+    audio_tar_name, split_dir = KATHBATH_SPLITS[split]
+    transcripts_tar = download(f"{KATHBATH_URL}/transcripts_n2w.tar", raw_dir / "transcripts_n2w.tar")
+    utterances_by_lang = {lang: read_kathbath_transcripts(transcripts_tar, lang, split_dir, raw_dir / split)
+                          for lang in kathbath_langs}
+    stream_tar_members(f"{KATHBATH_URL}/{audio_tar_name}",
+                       {f"kb_data_clean_m4a/{utterance.path.parent.name}/{split_dir}/audio/{utterance.path.name}":
+                        utterance.path for utterances in utterances_by_lang.values() for utterance in utterances})
+    return utterances_by_lang
+
+
+def parse_fleurs_tsv(tsv_text, audio_dir):
+    """FLEURS `{split}.tsv` has no header: sentence id, file, raw transcription, transcription, characters, samples,
+    gender. The raw (cased, punctuated) transcription is the reference; normalize() strips both sides alike."""
+    # ponytail: FLEURS has no speaker ids; each recording counts as its own speaker, so babble may share a voice
+    # with the target.
+    fields = [line.split("\t") for line in tsv_text.splitlines() if line.strip()]
+    return tuple(Utterance(fname, raw_text.strip(), Path(fname).stem, gender.lower(), audio_dir / fname)
+                 for _, fname, raw_text, *_, gender in fields)
+
+
+def read_fleurs(config, raw_dir):
+    tsv_path = download(f"{FLEURS_URL}/{config}/{FLEURS_SPLIT}.tsv", raw_dir / config / f"{FLEURS_SPLIT}.tsv")
+    utterances = parse_fleurs_tsv(tsv_path.read_text(encoding="utf-8"), raw_dir / config / FLEURS_SPLIT)
+    print(f"[{config}] {tsv_path}: {len(utterances)} rows", flush=True)
+    stream_tar_members(f"{FLEURS_URL}/{config}/audio/{FLEURS_SPLIT}.tar.gz",
+                       {f"{FLEURS_SPLIT}/{utterance.path.name}": utterance.path for utterance in utterances},
+                       mode="r|gz")
+    return utterances
+
+
+def asr_source(lang, split):
+    return f"kathbath/{split}" if LANGUAGES[lang].kathbath else f"fleurs/{LANGUAGES[lang].fleurs}/{FLEURS_SPLIT}"
 
 
 def assign_roles(decoded_utterances, asr_count, babble_count):
@@ -178,18 +220,16 @@ def assign_roles(decoded_utterances, asr_count, babble_count):
 def run_asr(out_dir, seed, split):
     from indic_s2t.audio import load_16k_mono
 
-    print_hf_kathbath_layout()
-    audio_tar_name, split_dir = KATHBATH_SPLITS[split]
-    raw_dir = out_dir / "raw" / "kathbath"
-    transcripts_tar = download(f"{KATHBATH_URL}/transcripts_n2w.tar", raw_dir / "transcripts_n2w.tar")
-    audio_root = raw_dir / split
-    utterances_by_lang = {lang: read_kathbath_transcripts(transcripts_tar, lang, split_dir, audio_root)
-                          for lang in LANG_NAMES}
-    stream_kathbath_audio(f"{KATHBATH_URL}/{audio_tar_name}", split_dir,
-                          [utterance.path for utterances in utterances_by_lang.values() for utterance in utterances])
+    utterances_by_lang = {**kathbath_utterances(out_dir / "raw" / "kathbath", split),
+                          **{lang: read_fleurs(language.fleurs, out_dir / "raw" / "fleurs")
+                             for lang, language in LANGUAGES.items() if language.fleurs}}
 
     asr_rows, babble_rows = [], []
-    for lang, utterances in utterances_by_lang.items():
+    for lang in LANGUAGES:
+        if lang not in utterances_by_lang:
+            print(f"[{lang}] no ASR source (kathbath/fleurs), skipped")
+            continue
+        utterances = utterances_by_lang[lang]
         print(f"[{lang}] {len(utterances)} utterances from {len({u.speaker_id for u in utterances})} speakers")
         shuffled_utterances = random.Random(f"{seed}:{lang}").sample(sorted(utterances, key=lambda u: u.fname),
                                                                      len(utterances))
@@ -198,7 +238,8 @@ def run_asr(out_dir, seed, split):
         for index, (utterance, wave) in enumerate(asr_picks):
             audio_path = out_dir / "asr" / f"{lang}_{index:03d}.wav"
             write_wav(audio_path, wave)
-            asr_rows.append(asr_row(lang, index, audio_path, len(wave) / SAMPLE_RATE, utterance.text, split,
+            asr_rows.append(asr_row(lang, index, audio_path, len(wave) / SAMPLE_RATE, utterance.text,
+                                    asr_source(lang, split),
                                     {"speaker_id": utterance.speaker_id, "gender": utterance.gender,
                                      "original_id": Path(utterance.fname).stem}))
         for index, (utterance, wave) in enumerate(babble_picks):
@@ -216,7 +257,7 @@ def run_asr(out_dir, seed, split):
     print(f"wrote {len(asr_rows)} asr rows, {len(babble_rows)} babble rows")
 
 
-# ---------- qa stage (IndicQA) ----------
+# ---------- qa stage (IndicQA, SQuAD) ----------
 
 @dataclass(frozen=True)
 class QAQuestion:
@@ -249,18 +290,23 @@ def word_count(text):
     return sum(any(char.isalnum() for char in token) for token in text.split())
 
 
+def has_no_digits_and_only_own_script(question, lang):
+    from indic_s2t.textnorm import script_letter_share  # textnorm needs indic-nlp, which the tts env lacks
+    return not re.search(r"\d", question.question) and script_letter_share(question.question, lang) == 1.0
+
+
 # Ordered: counts are for what each filter removes after the previous ones. `\d` matches Indic digits too.
 QUESTION_FILTERS = (
-    ("digits_or_latin", lambda question: not re.search(r"\d|[A-Za-z]", question.question)),
-    ("word_count", lambda question: MIN_WORDS <= word_count(question.question) <= MAX_WORDS),
-    ("passage_length", lambda question: len(question.context) <= MAX_CONTEXT_CHARS),
+    ("digits_or_off_script", has_no_digits_and_only_own_script),
+    ("word_count", lambda question, lang: MIN_WORDS <= word_count(question.question) <= MAX_WORDS),
+    ("passage_length", lambda question, lang: len(question.context) <= MAX_CONTEXT_CHARS),
 )
 
 
-def apply_question_filters(questions):
+def apply_question_filters(questions, lang):
     removed_counts = []
     for filter_name, keep in QUESTION_FILTERS:
-        kept_questions = tuple(question for question in questions if keep(question))
+        kept_questions = tuple(question for question in questions if keep(question, lang))
         removed_counts.append((filter_name, len(questions) - len(kept_questions)))
         questions = kept_questions
     return questions, tuple(removed_counts)
@@ -293,15 +339,27 @@ def question_rows(questions, lang):
                  for index, question in enumerate(questions))
 
 
-def run_qa(out_dir, seed):
-    from huggingface_hub import hf_hub_download
+def squad_file_for(lang, raw_dir):
+    """Local SQuAD-format JSON for the language's QA source, or None when it has none."""
+    language = LANGUAGES[lang]
+    if language.indicqa:
+        from huggingface_hub import hf_hub_download
+        return hf_hub_download("ai4bharat/IndicQA", f"data/indicqa.{language.indicqa}.json", repo_type="dataset")
+    if language.squad_url:
+        return download(language.squad_url, raw_dir / "squad" / f"{lang}.json")
+    return None
 
+
+def run_qa(out_dir, seed):
     all_rows = []
-    for lang in LANG_NAMES:
-        squad_path = hf_hub_download("ai4bharat/IndicQA", f"data/indicqa.{lang}.json", repo_type="dataset")
+    for lang in LANGUAGES:
+        squad_path = squad_file_for(lang, out_dir / "raw")
+        if squad_path is None:
+            print(f"[{lang}] no QA source (indicqa/squad_url), skipped")
+            continue
         with open(squad_path, encoding="utf-8") as squad_file:
             questions, malformed_count = parse_squad(json.load(squad_file))
-        kept_questions, removed_counts = apply_question_filters(questions)
+        kept_questions, removed_counts = apply_question_filters(questions, lang)
         print(f"[{lang}] {len(questions)} questions parsed, {malformed_count} malformed skipped; unanswerable: "
               f"{sum(not q.answerable for q in questions)}")
         for filter_name, removed_count in removed_counts:
@@ -327,7 +385,7 @@ def passes_tts_qc(question_text, duration):
 
 def voice_description(lang, index):
     """Rotates female/male x normal/slightly-fast: index 0 F normal, 1 M normal, 2 F fast, 3 M fast."""
-    speaker = TTS_SPEAKERS[lang][index % 2]
+    speaker = LANGUAGES[lang].tts_speakers[index % 2]
     pace = TTS_PACES[(index // 2) % 2]
     return (f"{speaker} speaks at {pace} pace with a moderate pitch. "
             f"The recording is of very clear audio, close-sounding, with no background noise.")
@@ -441,7 +499,7 @@ def run_examples(out_dir):
     qa_path = next((path for path in (out_dir / "qa_track.jsonl", out_dir / "qa_questions.jsonl") if path.exists()),
                    None)
     track_rows = read_jsonl(asr_track_path) + (read_jsonl(qa_path) if qa_path else ())
-    for lang in LANG_NAMES:
+    for lang in LANGUAGES:
         lang_pool = tuple(source for source in babble_pool if babble_lang[source.utt_id] == lang)
         for track in ("asr", "qa"):
             for row in [row for row in track_rows if row["lang"] == lang and row["track"] == track][:EXAMPLES_PER_TRACK]:

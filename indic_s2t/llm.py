@@ -6,8 +6,9 @@ from dataclasses import dataclass
 
 import httpx
 
+from indic_s2t.languages import LANGUAGES
+
 NO_ANSWER = "NO_ANSWER"
-LANGUAGE_NAMES = {"hi": "Hindi", "ta": "Tamil"}
 
 
 @dataclass(frozen=True)
@@ -21,7 +22,7 @@ class Completion:
 
 def qa_messages(question, context, lang, asr_aware=True):
     """Identical template for oracle and ASR questions: only `question` changes."""
-    language_name = LANGUAGE_NAMES[lang]
+    language_name = LANGUAGES[lang].name
     instructions = (
         f"Answer the question using ONLY the passage. Answer in {language_name}, the same language as the question, "
         f"with a short span of a few words. Do not explain. "

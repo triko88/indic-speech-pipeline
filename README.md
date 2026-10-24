@@ -1,7 +1,20 @@
 # indic-speech-pipeline
 
-Spoken question (Hindi or Tamil) → text answer, built and evaluated on one laptop: IndicConformer-600M ASR on the CPU
-(ONNX Runtime), a 4-bit LLM in `llama-server` on the RX 6650M over Vulkan, and a judge LLM from another model family.
+Spoken question (Hindi, English or Sanskrit) → text answer, built and evaluated on one laptop: IndicConformer-600M
+(ONNX Runtime) or Whisper ASR on the CPU, a 4-bit LLM in `llama-server` on the RX 6650M over Vulkan, and a judge LLM from
+another model family.
+
+## Languages
+
+Every language-specific value lives in `languages.toml`, one table per language: its name, Unicode block, ASR model,
+data sources, abstain phrases and TTS voices. Add a table to try a language, comment one out to drop it, then
+`make data`. The current set:
+
+| Lang | ASR model | ASR track | QA track |
+|---|---|---|---|
+| hi | IndicConformer-600M | Kathbath test_unknown | IndicQA |
+| en | openai/whisper-small | FLEURS en_us test | SQuAD v2 dev |
+| sa | IndicConformer-600M | Kathbath test_unknown | none yet (ASR only; add a `squad_url`) |
 
 ## System
 
@@ -10,6 +23,7 @@ Spoken question (Hindi or Tamil) → text answer, built and evaluated on one lap
    │   acoustic condition, on the fly: clean | babble_10db | telephony | white_{snr}db, chained with "+"
    ▼
  IndicConformer-600M  ── ONNX Runtime, CPU, 8 intra-op threads, RNNT (or CTC) decoding     [process 1: ASR]
+   or Whisper         ── transformers, CPU, greedy (per language's asr_model)
    │ transcript
    ▼
  llama-server (llama.cpp, Vulkan, RX 6650M, all layers offloaded, 1 slot, ctx 4096)       [process 2: LLM]
@@ -44,7 +58,7 @@ make check                                        # Vulkan devices, dGPU proof, 
 ```sh
 make test        # unit tests (no models)
 make test-hw     # model/GPU tests, one process per file
-make data        # Kathbath test_unknown (ASR track), IndicQA (QA questions), condition examples
+make data        # ASR models, ASR track + babble (Kathbath/FLEURS), QA questions (IndicQA/SQuAD), examples
 make tts         # Parler-TTS audio for the QA questions (resumable, prints ETA)
 make select      # LLM candidates A and B, one at a time -> runs/llm_selection.md
 make smoke       # 5 items per track x language, clean only

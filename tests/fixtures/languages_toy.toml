@@ -1,0 +1,6 @@
+[xx]
+name = "Toy"
+script_block = [0x0041, 0x007A]
+asr_model = "toy/asr"
+abstain_phrases = ["no answer", "nope"]
+tts_speakers = ["Ann", "Bob"]

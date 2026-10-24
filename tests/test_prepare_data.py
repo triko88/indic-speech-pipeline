@@ -36,16 +36,36 @@ def test_parse_squad_marks_empty_answer_text_unanswerable():
 
 
 def test_each_filter_removes_exactly_the_expected_questions():
+    # The toy file mixes Hindi and Tamil: questions in the other script count as off-script.
     toy_questions, _ = load_toy_questions()
-    kept_questions, removed_counts = prepare_data.apply_question_filters(toy_questions)
-    assert removed_counts == (("digits_or_latin", 4), ("word_count", 2), ("passage_length", 1))
+    kept_questions, removed_counts = prepare_data.apply_question_filters(toy_questions, "hi")
+    assert removed_counts == (("digits_or_off_script", 7), ("word_count", 2), ("passage_length", 0))
     assert {question.question for question in kept_questions} == {
         "भारत की राजधानी क्या है ?",
         "भारत का राष्ट्रीय पशु कौन सा है ?",
         "गंगा नदी कहाँ से निकलती है ?",
-        "இந்தியாவின் தலைநகரம் எது ?",
-        "இந்தியாவின் தேசிய விலங்கு எது ?",
     }
+
+
+def test_english_questions_survive_the_script_filter():
+    english_questions = tuple(prepare_data.QAQuestion(src_id=str(index), passage_id=index, question=question_text,
+                                                      context="A short passage.", answers=("x",), answerable=True)
+                              for index, question_text in enumerate(("Where is the Taj Mahal located?",
+                                                                     "What is H2O made of?",
+                                                                     "Who built the ताजमहल?")))
+    kept_questions, _ = prepare_data.apply_question_filters(english_questions, "en")
+    assert [question.question for question in kept_questions] == ["Where is the Taj Mahal located?"]
+
+
+def test_parse_fleurs_tsv_counts_each_recording_as_its_own_speaker(tmp_path):
+    tsv_text = ("1980\t127.wav\tUnfortunately, traffic is hard.\tunfortunately traffic is hard\tu n\t202240\tMALE\n"
+                "1980\t905.wav\tUnfortunately, traffic is hard.\tunfortunately traffic is hard\tu n\t126720\tFEMALE\n"
+                "1914\t621.wav\tTwo pools: hidden and expressed.\ttwo pools hidden and expressed\tt w\t94080\tFEMALE\n")
+    utterances = prepare_data.parse_fleurs_tsv(tsv_text, tmp_path)
+    assert [utterance.text for utterance in utterances][2] == "Two pools: hidden and expressed."
+    assert [utterance.speaker_id for utterance in utterances] == ["127", "905", "621"]
+    assert [utterance.gender for utterance in utterances] == ["male", "female", "female"]
+    assert utterances[0].path == tmp_path / "127.wav"
 
 
 def test_round_robin_uses_every_passage_before_reusing_one():
@@ -84,11 +104,12 @@ def test_tts_qc_rule(question_text, duration, expected):
 
 
 def test_voice_descriptions_rotate_through_four_clean_voices():
-    for lang in ("hi", "ta"):
+    for lang in ("hi", "en"):
         descriptions = [prepare_data.voice_description(lang, index) for index in range(8)]
         assert len(set(descriptions[:4])) == 4
         assert descriptions[4:] == descriptions[:4]
         assert all("very clear audio" in description for description in descriptions)
+    assert prepare_data.voice_description("en", 1).startswith("Thoma ")
 
 
 def test_eta_uses_moving_average_of_recent_items():
@@ -110,7 +131,7 @@ def test_question_and_track_rows_have_exactly_the_required_fields():
 
 def test_manifest_validation_reports_missing_fields():
     track_row = prepare_data.qa_track_row(
-        prepare_data.question_rows((make_question(0, 0),), "ta")[0], "x.wav", 2.0, "Jaya speaks", 1)
+        prepare_data.question_rows((make_question(0, 0),), "en")[0], "x.wav", 2.0, "Mary speaks", 1)
     prepare_data.validate_manifest_row(track_row)
     incomplete_row = {field: value for field, value in track_row.items() if field != "audio"}
     with pytest.raises(ValueError, match="audio"):
@@ -134,7 +155,7 @@ def test_import_manifest_normalises_audio_to_16k(tmp_path):
 
 
 def test_asr_row_has_exactly_the_required_fields():
-    asr_row = prepare_data.asr_row("hi", 0, "data/asr/hi_000.wav", 3.2, "नमस्ते", "test_unknown",
+    asr_row = prepare_data.asr_row("hi", 0, "data/asr/hi_000.wav", 3.2, "नमस्ते", "kathbath/test_unknown",
                                    {"speaker_id": "12", "original_id": "844-12-f"})
     assert asr_row["id"] == "hi_000" and asr_row["track"] == "asr" and asr_row["source"] == "kathbath/test_unknown"
     assert set(asr_row) == {"id", "track", "lang", "audio", "duration", "ref_text", "source", "meta"}

@@ -1,7 +1,7 @@
 [project]
 name = "indic-speech-pipeline"
 version = "0.1.0"
-description = "Indic (hi, ta) speech -> text-response system and its evaluation, on one laptop"
+description = "Speech -> text-response system and its evaluation (languages in languages.toml), on one laptop"
 requires-python = "==3.12.*"
 dependencies = [
     "torch==2.14.1",

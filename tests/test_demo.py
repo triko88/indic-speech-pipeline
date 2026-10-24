@@ -26,6 +26,6 @@ def test_answer_wav_uses_passage_prompt_and_sums_stage_times(tmp_path, monkeypat
     assert answer["speech_end_to_first_token_s"] == answer["asr_s"] + 0.25
     assert llm.NO_ANSWER in recorded_messages[0][0]["content"]  # passage mode: extractive prompt
 
-    demo.answer_wav(asr_model=None, base_url="http://x", wav_path=wav_path, lang="ta")
+    demo.answer_wav(asr_model=None, base_url="http://x", wav_path=wav_path, lang="sa")
     assert llm.NO_ANSWER not in recorded_messages[1][0]["content"]  # no passage: open question prompt
-    assert "Tamil" in recorded_messages[1][0]["content"]
+    assert "Sanskrit" in recorded_messages[1][0]["content"]

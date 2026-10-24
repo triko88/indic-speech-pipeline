@@ -11,13 +11,13 @@ import time
 from pathlib import Path
 
 from indic_s2t import llm
+from indic_s2t.languages import LANGUAGES
 
-LANGUAGE_NAMES = {"hi": "Hindi", "ta": "Tamil"}
 SERVER_BIN = "third_party/llama.cpp/build/bin/llama-server"
 
 
 def open_question_messages(question, lang):
-    instructions = (f"Answer the question briefly in {LANGUAGE_NAMES[lang]}. The question was produced by automatic "
+    instructions = (f"Answer the question briefly in {LANGUAGES[lang].name}. The question was produced by automatic "
                     "speech recognition and may contain recognition errors, so interpret it charitably.")
     return ({"role": "system", "content": instructions}, {"role": "user", "content": question})
 
@@ -45,7 +45,7 @@ def dgpu_device(server_bin):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--wav", required=True)
-    parser.add_argument("--lang", required=True, choices=sorted(LANGUAGE_NAMES))
+    parser.add_argument("--lang", required=True, choices=sorted(LANGUAGES))
     parser.add_argument("--context", type=Path, help="text file with a passage to answer from")
     parser.add_argument("--gguf", required=True)
     parser.add_argument("--server_bin", default=SERVER_BIN)
@@ -53,9 +53,10 @@ def main():
     args = parser.parse_args()
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
-    from indic_s2t.asr import load_asr
+    from indic_s2t.asr import load_asr_models
     from indic_s2t.llamacpp_server import running_server
-    asr_model, asr_info = load_asr(args.asr_threads)
+    model_id = LANGUAGES[args.lang].asr_model
+    asr_model, asr_info = load_asr_models((model_id,), args.asr_threads)[model_id]
     print(asr_info)
     context = args.context.read_text(encoding="utf-8") if args.context else None
     with running_server(args.server_bin, args.gguf, dgpu_device(args.server_bin)) as server_info:

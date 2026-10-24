@@ -29,12 +29,12 @@ EXAMPLES_PER_TYPE = 3
 METRIC_DEFINITIONS = """\
 **Normalisation** (identical for reference and hypothesis): Unicode NFC; strip ZWJ, ZWNJ, ZWSP, BOM; indic-nlp-library
 normaliser with nasal unification (`nasals_mode=to_nasal_consonants`: anusvara before a stop becomes the
-homorganic nasal + virama, so हिंदू = हिन्दू; a no-op for Tamil); Indic digits to ASCII; replace `\\p{P}\\p{S}` (incl. danda and double danda) with spaces; collapse whitespace;
+homorganic nasal + virama, so हिंदू = हिन्दू; only for languages with `indicnlp = true` in languages.toml); Indic digits to ASCII; replace `\\p{P}\\p{S}` (incl. danda and double danda) with spaces; collapse whitespace;
 lowercase. Nukta stripping is reported as a separate column (`WER no-nukta`).
 
 **ASR.** Own Levenshtein alignment with S/D/I counts. Corpus WER = Σ(S+D+I) / Σ reference words. CER over Unicode code
-points, spaces kept. Akshara-CER over grapheme clusters (`regex` `\\X`; a Devanagari conjunct is one cluster, a Tamil
-pulli consonant is its own). Exact match = normalised hypothesis equals normalised reference. WER 95% CI: percentile
+points, spaces kept. Akshara-CER over grapheme clusters (`regex` `\\X`; a Devanagari conjunct is one cluster; for Latin
+script each letter is its own). Exact match = normalised hypothesis equals normalised reference. WER 95% CI: percentile
 bootstrap over utterances, 2000 resamples (ignores speaker clustering).
 
 **Response labels** (rule-based, mutually exclusive). Answerable question: `FALSE_ABSTAIN` if the response contains
@@ -403,7 +403,7 @@ def build_report(run_dir, selection_dir, variance_dirs, audit_filled=None, laten
              for label, counts in zip(agreement["confusion_labels"], agreement["confusion"])],
             ("rule", *agreement["confusion_labels"]))
     sections = [
-        "# Indic speech → text-response evaluation (hi, ta)\n",
+        f"# Speech → text-response evaluation ({', '.join(dict.fromkeys(row['lang'] for row in asr_rows))})\n",
         "## Setup\n", setup_section(run_dir),
         "## Metric definitions\n", METRIC_DEFINITIONS,
         "## LLM selection and tokenizer fertility\n", selection_section(selection_dir),

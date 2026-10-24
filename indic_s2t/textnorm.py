@@ -6,21 +6,25 @@ from functools import lru_cache
 import regex
 from indicnlp.normalize.indic_normalize import IndicNormalizerFactory
 
+from indic_s2t.languages import LANGUAGES
+
 ZERO_WIDTH_CHARACTERS = regex.compile("[​‌‍﻿]")
 PUNCTUATION_AND_SYMBOLS = regex.compile(r"[\p{P}\p{S}]+")  # covers danda (।) and double danda (॥)
-SCRIPT_BLOCKS = {"hi": (0x0900, 0x097F), "ta": (0x0B80, 0x0BFF)}
 
 
 @lru_cache(maxsize=None)
 def indic_normalizer(lang, strip_nukta):
-    # Anusvara before a stop becomes the homorganic nasal + virama (हिंदू -> हिन्दू); a no-op for Tamil.
+    # Anusvara before a stop becomes the homorganic nasal + virama (हिंदू -> हिन्दू); a no-op without anusvara.
+    # Only for languages with `indicnlp = true`: indic-nlp raises KeyError for codes it doesn't know (e.g. en).
     return IndicNormalizerFactory().get_normalizer(lang, remove_nuktas=strip_nukta, nasals_mode="to_nasal_consonants")
 
 
 def normalize(text, lang, strip_nukta=False):
-    """NFC; strip ZWJ/ZWNJ/ZWSP/BOM; indic-nlp normaliser (nasals unified); Indic digits -> ASCII; drop \\p{P}\\p{S}; collapse spaces; lowercase."""
+    """NFC; strip ZWJ/ZWNJ/ZWSP/BOM; indic-nlp normaliser if `indicnlp` (nasals unified); Indic digits -> ASCII;
+    drop \\p{P}\\p{S}; collapse spaces; lowercase."""
     composed_text = ZERO_WIDTH_CHARACTERS.sub("", unicodedata.normalize("NFC", text))
-    indic_normalized = indic_normalizer(lang, strip_nukta).normalize(composed_text)
+    indic_normalized = (indic_normalizer(lang, strip_nukta).normalize(composed_text) if LANGUAGES[lang].indicnlp
+                        else composed_text)
     ascii_digits = regex.sub(r"\d", lambda digit_match: str(unicodedata.digit(digit_match.group())), indic_normalized)
     return " ".join(PUNCTUATION_AND_SYMBOLS.sub(" ", ascii_digits).split()).lower()
 
@@ -36,7 +40,7 @@ def aksharas(text):
 
 def script_letter_share(text, lang):
     """Share of letters/marks that fall in the language's Unicode block; 0.0 when there are none."""
-    block_start, block_end = SCRIPT_BLOCKS[lang]
+    block_start, block_end = LANGUAGES[lang].script_block
     letters = [character for character in text if unicodedata.category(character)[0] in "LM"]
     if not letters:
         return 0.0

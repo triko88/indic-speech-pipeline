@@ -41,14 +41,14 @@ def test_pilot_summary_accuracy_off_script_and_leaks():
          "timings": {"prompt_per_second": 400.0, "predicted_per_second": 30.0}},
         {"lang": "hi", "label": "CORRECT_ABSTAIN", "off_script": True, "reasoning_text": "hmm", "total_s": 3.0, "ttft_s": 0.4,
          "timings": {"prompt_per_second": 600.0, "predicted_per_second": 40.0}},
-        {"lang": "ta", "label": "HALLUCINATED", "off_script": False, "reasoning_text": "", "total_s": 2.0, "ttft_s": 0.3,
+        {"lang": "en", "label": "HALLUCINATED", "off_script": False, "reasoning_text": "", "total_s": 2.0, "ttft_s": 0.3,
          "timings": {"prompt_per_second": 500.0, "predicted_per_second": 35.0}},
-        {"lang": "ta", "label": "FALSE_ABSTAIN", "off_script": False, "reasoning_text": "", "total_s": 4.0, "ttft_s": 0.5,
+        {"lang": "en", "label": "FALSE_ABSTAIN", "off_script": False, "reasoning_text": "", "total_s": 4.0, "ttft_s": 0.5,
          "timings": {"prompt_per_second": 500.0, "predicted_per_second": 35.0}},
     )
     summary = select_llm.pilot_summary(pilot_items)
     assert summary["accuracy"] == pytest.approx(0.5)
-    assert summary["accuracy_by_lang"] == {"hi": 1.0, "ta": 0.0}
+    assert summary["accuracy_by_lang"] == {"hi": 1.0, "en": 0.0}
     assert summary["off_script_rate"] == pytest.approx(0.25)
     assert summary["reasoning_leak_count"] == 1
     assert summary["median_latency_s"] == pytest.approx(2.5)
@@ -57,24 +57,27 @@ def test_pilot_summary_accuracy_off_script_and_leaks():
 
 
 def test_pilot_items_takes_n_per_language_in_file_order():
-    questions = tuple({"id": f"{lang}{index}", "lang": lang} for index in range(15) for lang in ("hi", "ta"))
+    questions = tuple({"id": f"{lang}{index}", "lang": lang} for index in range(15) for lang in ("hi", "en", "sa"))
     pilot_questions = select_llm.pilot_questions(questions, per_lang=10)
-    assert [question["id"] for question in pilot_questions[:2]] == ["hi0", "ta0"]
-    assert sum(question["lang"] == "hi" for question in pilot_questions) == 10
-    assert sum(question["lang"] == "ta" for question in pilot_questions) == 10
+    assert [question["id"] for question in pilot_questions[:3]] == ["hi0", "en0", "sa0"]
+    assert all(sum(question["lang"] == lang for question in pilot_questions) == 10 for lang in ("hi", "en", "sa"))
 
 
 def test_fertility_passages_are_unique_contexts_per_language():
     questions = ({"lang": "hi", "context": "क"}, {"lang": "hi", "context": "क"}, {"lang": "hi", "context": "ख"},
-                 {"lang": "ta", "context": "த"})
+                 {"lang": "en", "context": "k"})
     assert select_llm.fertility_passages(questions, "hi", limit=20) == ("क", "ख")
 
 
 def test_summary_markdown_has_tables_and_recommendation():
-    results = (candidate("A", "gemma", 0.70, 1.0) | {"fertility": {"hi": 0.4, "ta": 0.6}},
-               candidate("B", "qwen", 0.80, 2.0) | {"fertility": {"hi": 0.5, "ta": 0.9}})
+    results = (candidate("A", "gemma", 0.70, 1.0) | {"fertility": {"hi": 0.4, "en": 0.2, "sa": 0.6}},
+               candidate("B", "qwen", 0.80, 2.0) | {"fertility": {"hi": 0.5, "en": 0.3, "sa": 0.9}})
+    for result in results:
+        result["pilot"]["accuracy_by_lang"] = {"hi": 0.5, "en": 0.9}
     markdown = select_llm.summary_markdown(results)
     assert "| A |" in markdown and "| B |" in markdown
+    assert "| acc hi / en |" in markdown and "| 0.50 / 0.90 |" in markdown
+    assert "| Candidate | hi | en | sa |" in markdown and "| A | 0.400 | 0.200 | 0.600 |" in markdown
     assert "Answerer: **B**" in markdown and "Judge: **A**" in markdown
 
 

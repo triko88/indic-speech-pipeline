@@ -9,10 +9,13 @@ HINDI_PAIRS = (
     ("गंगा नदी हिमालय से निकलती है", "गंगा नदी हिमालय से निकलती हैं और बहती है"),
     ("ताजमहल आगरा में है", "ताज महल आगरा में"),
 )
-TAMIL_PAIRS = (
-    ("தமிழ்நாட்டின் தலைநகரம் சென்னை", "தமிழ்நாட்டின் தலைநகர் சென்னையில்"),
-    ("காவிரி ஆறு கர்நாடகாவில் உற்பத்தியாகிறது.", "காவேரி ஆறு கர்நாடகாவில் உற்பத்தியாகிறது"),
-    ("திருவள்ளுவர் திருக்குறளை எழுதினார்", "திருவள்ளுவர் திருக்குறள் எழுதினார்"),
+SANSKRIT_PAIRS = (
+    ("रामः वनं गच्छति।", "रामः वनम् गच्छति"),
+    ("गङ्गा हिमालयात् प्रवहति", "गंगा हिमालयात् प्रवहति च"),
+)
+ENGLISH_PAIRS = (
+    ("The capital of India is New Delhi.", "the capital of india is delhi"),
+    ("The Ganga flows from the Himalaya", "the ganges flows from the himalayas"),
 )
 
 
@@ -20,7 +23,7 @@ def normalized_pairs(raw_pairs, lang):
     return tuple((normalize(reference, lang), normalize(hypothesis, lang)) for reference, hypothesis in raw_pairs)
 
 
-@pytest.mark.parametrize("raw_pairs,lang", [(HINDI_PAIRS, "hi"), (TAMIL_PAIRS, "ta")])
+@pytest.mark.parametrize("raw_pairs,lang", [(HINDI_PAIRS, "hi"), (SANSKRIT_PAIRS, "sa"), (ENGLISH_PAIRS, "en")])
 def test_wer_and_cer_match_jiwer(raw_pairs, lang):
     pairs = normalized_pairs(raw_pairs, lang)
     references = [reference for reference, _ in pairs]

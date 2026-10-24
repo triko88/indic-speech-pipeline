@@ -4,7 +4,8 @@ from indic_s2t.scoring import (judge_label, judge_messages, label_response, pars
                                token_f1)
 
 HINDI_PASSAGE = "ताजमहल आगरा शहर में यमुना नदी के किनारे स्थित है। इसे शाहजहाँ ने बनवाया था।"
-TAMIL_PASSAGE = "தமிழ்நாட்டின் தலைநகரம் சென்னை ஆகும். இது வங்காள விரிகுடா கடற்கரையில் அமைந்துள்ளது."
+SANSKRIT_PASSAGE = "रामः वनं गच्छति। तस्य भ्राता लक्ष्मणः अपि गच्छति।"
+ENGLISH_PASSAGE = "The Taj Mahal stands on the bank of the Yamuna river in Agra."
 
 
 def label(response, gold_answers, passage, answerable, lang):
@@ -17,15 +18,20 @@ def test_answerable_no_answer_token_is_false_abstain():
 
 def test_answerable_abstain_phrase_is_false_abstain():
     assert label("इस अनुच्छेद में उत्तर नहीं है।", ("आगरा",), HINDI_PASSAGE, True, "hi") == "FALSE_ABSTAIN"
-    assert label("பதில் இல்லை", ("சென்னை",), TAMIL_PASSAGE, True, "ta") == "FALSE_ABSTAIN"
+    assert label("Not mentioned in the passage.", ("Agra",), ENGLISH_PASSAGE, True, "en") == "FALSE_ABSTAIN"
 
 
 def test_correct_by_substring():
     assert label("आगरा में।", ("आगरा",), HINDI_PASSAGE, True, "hi") == "CORRECT"
 
 
-def test_tamil_suffix_case_is_correct():
-    assert label("சென்னையில்", ("சென்னை",), TAMIL_PASSAGE, True, "ta") == "CORRECT"
+def test_sanskrit_case_suffix_is_correct():
+    assert label("लक्ष्मणस्य", ("लक्ष्मण",), SANSKRIT_PASSAGE, True, "sa") == "CORRECT"
+
+
+def test_english_answer_is_case_and_punctuation_insensitive():
+    assert label("in agra.", ("Agra",), ENGLISH_PASSAGE, True, "en") == "CORRECT"
+    assert not label_response("Agra", ("Agra",), ENGLISH_PASSAGE, True, "en").off_script
 
 
 def test_correct_by_token_f1_when_no_substring():
@@ -70,10 +76,10 @@ def test_token_f1_and_passage_support():
     assert token_f1("a", "b") == 0.0
     # "चेन्नई" unseen, "आगरा" seen -> 0.5
     assert passage_support("आगरा चेन्नई", HINDI_PASSAGE, "hi") == pytest.approx(0.5)
-    # சென்னையை = செ ன் னை யை (4 aksharas) -> ⌈2.8⌉ = 3-akshara prefix சென்னை is in the passage
-    assert passage_support("சென்னையை", TAMIL_PASSAGE, "ta") == 1.0
-    # சென்னையின் = 5 aksharas -> 4-akshara prefix சென்னையி is not: longer suffixes fall outside the 70% rule
-    assert passage_support("சென்னையின்", TAMIL_PASSAGE, "ta") == 0.0
+    # लक्ष्मणस्य = ल क्ष्म ण स्य (4 aksharas) -> ⌈2.8⌉ = 3-akshara prefix लक्ष्मण is in the passage
+    assert passage_support("लक्ष्मणस्य", SANSKRIT_PASSAGE, "sa") == 1.0
+    # लक्ष्मणाय -> 3-akshara prefix लक्ष्मणा is not: a vowel-changing suffix falls outside the 70% rule
+    assert passage_support("लक्ष्मणाय", SANSKRIT_PASSAGE, "sa") == 0.0
 
 
 def test_qa_rates():
