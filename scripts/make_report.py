@@ -175,6 +175,17 @@ def tokens_per_second(token_count, milliseconds):
     return token_count / milliseconds * 1000 if token_count and milliseconds else None
 
 
+def throttled_count(prompt_speeds):
+    """Requests whose server-side prompt speed fell below half the median: GPU clocked down, not prompt length."""
+    present_speeds = [speed for speed in prompt_speeds if speed is not None]
+    median_speed = percentile(present_speeds, 50)
+    return sum(speed < 0.5 * median_speed for speed in present_speeds) if present_speeds else 0
+
+
+def gpu_values(llm_rows, field):
+    return [row["gpu"][field] for row in llm_rows if row.get("gpu") and row["gpu"].get(field) is not None]
+
+
 def latency_table(asr_rows, llm_rows):
     asr_by_key = {(row["id"], row["condition"]): row for row in asr_rows}
     table = []
@@ -206,6 +217,9 @@ def latency_table(asr_rows, llm_rows):
                                                          if row["ttft_s"] is not None], 95),
             "e2e_p50": percentile([asr["asr_s"] + row["total_s"] for asr, row in joined], 50),
             "e2e_p95": percentile([asr["asr_s"] + row["total_s"] for asr, row in joined], 95),
+            "throttled_requests": throttled_count(prompt_speeds),
+            "gpu_sclk_mhz_p50": percentile(gpu_values(lang_llm, "sclk_mhz"), 50),
+            "gpu_junction_c_max": max(gpu_values(lang_llm, "junction_c"), default=None),
         })
     return table
 
@@ -352,7 +366,25 @@ def examples_section(examples):
     return "\n".join(lines) + "\n"
 
 
-def build_report(run_dir, selection_dir, variance_dirs, audit_filled=None):
+LATENCY_COLUMNS = ("lang", "asr_s_p50", "asr_s_p95", "asr_rtf", "asr_rtf_p95", "ttft_p50", "ttft_p95", "llm_total_p50",
+                   "llm_total_p95", "prompt_tok_s_p50", "decode_tok_s_p50", "prompt_tokens_p50", "output_tokens_p50",
+                   "speech_end_to_first_token_p50", "speech_end_to_first_token_p95", "e2e_p50", "e2e_p95",
+                   "throttled_requests", "gpu_sclk_mhz_p50", "gpu_junction_c_max")
+
+
+def latency_section(run_dirs):
+    """One table per run; a run without its own asr.jsonl (an LLM-only re-measurement) reuses the first run's."""
+    first_asr_rows = read_jsonl(Path(run_dirs[0]) / "asr.jsonl")
+    sections = []
+    for latency_run_dir in run_dirs:
+        asr_rows = read_jsonl(Path(latency_run_dir) / "asr.jsonl") or first_asr_rows
+        sections.append(f"### Latency: {Path(latency_run_dir).name}\n\n"
+                        + markdown_table(latency_table(asr_rows, read_jsonl(Path(latency_run_dir) / "llm.jsonl")),
+                                         LATENCY_COLUMNS))
+    return "\n".join(sections)
+
+
+def build_report(run_dir, selection_dir, variance_dirs, audit_filled=None, latency_runs=()):
     run_dir = Path(run_dir)
     asr_rows, llm_rows, judge_rows = (read_jsonl(run_dir / f"{stage}.jsonl") for stage in ("asr", "llm", "judge"))
     verdicts = rule_verdicts(llm_rows)
@@ -384,11 +416,9 @@ def build_report(run_dir, selection_dir, variance_dirs, audit_filled=None):
         "## Correctness by question WER\n", markdown_table(wer_bucket_table(llm_rows, verdicts),
                                                            ("bucket", "n", "correctness", "correctness_ci")),
         "## Latency\n",
-        "Stages run in separate processes, so E2E is the sum of separately measured stages. Seconds unless noted.\n\n",
-        markdown_table(latency_table(asr_rows, llm_rows), (
-            "lang", "asr_s_p50", "asr_s_p95", "asr_rtf", "asr_rtf_p95", "ttft_p50", "ttft_p95", "llm_total_p50",
-            "llm_total_p95", "prompt_tok_s_p50", "decode_tok_s_p50", "prompt_tokens_p50", "output_tokens_p50",
-            "speech_end_to_first_token_p50", "speech_end_to_first_token_p95", "e2e_p50", "e2e_p95")),
+        "Stages run in separate processes, so E2E is the sum of separately measured stages. Seconds unless noted. "
+        "`throttled_requests`: server-side prompt speed below half the run's median.\n\n",
+        latency_section((run_dir, *latency_runs)),
         "## Variance\n", markdown_table(variance_table(variance_dirs), ("lang", "metric", "runs", "mean", "spread_pct"))
         if variance_dirs else "_variance runs not provided_\n",
         "## Judge agreement\n",
@@ -411,9 +441,10 @@ def main():
     parser.add_argument("--selection", type=Path, default=Path("runs/llm_selection"))
     parser.add_argument("--variance", type=Path, nargs="*", default=())
     parser.add_argument("--audit_filled", type=Path)
+    parser.add_argument("--latency_runs", type=Path, nargs="*", default=(), help="extra runs shown in the latency section")
     args = parser.parse_args()
     report_path = args.run / "report.md"
-    report_path.write_text(build_report(args.run, args.selection, args.variance, args.audit_filled), encoding="utf-8")
+    report_path.write_text(build_report(args.run, args.selection, args.variance, args.audit_filled, args.latency_runs), encoding="utf-8")
     print(f"wrote {report_path}")
 
 

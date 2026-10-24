@@ -53,6 +53,18 @@ def vram_used_mib(card_dir):
     return int((card_dir / "device" / "mem_info_vram_used").read_text()) // (1024 * 1024)
 
 
+def dgpu_state(card_dir):
+    """Edge/junction temperature, shader clock and average power from the card's hwmon (None when absent)."""
+    hwmon_dirs = sorted((card_dir / "device" / "hwmon").glob("hwmon*"))
+
+    def scaled(file_name, divisor):
+        raw_value = read_text_or_none(hwmon_dirs[0] / file_name) if hwmon_dirs else None
+        return int(raw_value) / divisor if raw_value else None
+
+    return {"edge_c": scaled("temp1_input", 1000), "junction_c": scaled("temp2_input", 1000),
+            "sclk_mhz": scaled("freq1_input", 1_000_000), "power_w": scaled("power1_average", 1_000_000)}
+
+
 def ac_online(power_supply_root=POWER_SUPPLY_ROOT):
     """True/False for mains power, None when no supply exposes an `online` file."""
     online_files = sorted(power_supply_root.glob("*/online")) if power_supply_root.exists() else []

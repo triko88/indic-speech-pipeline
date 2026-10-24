@@ -64,16 +64,20 @@ def work_keys(stage, items, conditions):
     return tuple((item["id"], condition) for condition in (*conditions, ORACLE) for item in qa_items)
 
 
+def pending_keys(keys, out_path):
+    already_done = done_keys(out_path)
+    return tuple(key for key in keys if key not in already_done)
+
+
 def run_pending(keys, process, out_path, warmup):
     """Process keys not yet in out_path, appending one row each. Warm-ups re-run the first pending key, unrecorded."""
-    already_done = done_keys(out_path)
-    pending_keys = [key for key in keys if key not in already_done]
-    for _ in range(warmup if pending_keys else 0):
-        process(pending_keys[0])
-    for position, key in enumerate(pending_keys, start=1):
+    keys_to_run = pending_keys(keys, out_path)
+    for _ in range(warmup if keys_to_run else 0):
+        process(keys_to_run[0])
+    for position, key in enumerate(keys_to_run, start=1):
         append_jsonl(out_path, process(key))
-        print(f"  {position}/{len(pending_keys)} {key[0]} {key[1]}", flush=True)
-    return len(pending_keys)
+        print(f"  {position}/{len(keys_to_run)} {key[0]} {key[1]}", flush=True)
+    return len(keys_to_run)
 
 
 def question_for(item, condition, asr_hypotheses):
@@ -115,6 +119,12 @@ def write_stage_info(args, stage_name, extra):
 
 def load_items(args):
     return select_items(read_jsonl(args.asr_track) + read_jsonl(args.qa_track), args.limit)
+
+
+def stage_work_keys(args):
+    if args.child_stage == "judge":
+        return tuple((row["id"], row["condition"]) for row in read_jsonl(args.out / "llm.jsonl"))
+    return work_keys(args.child_stage, load_items(args), args.conditions)
 
 
 def asr_stage(args):
@@ -172,7 +182,7 @@ def server_info_dict(server_info):
 
 
 def llm_stage(args):
-    from indic_s2t import llm
+    from indic_s2t import llm, sysinfo
 
     items_by_id = {item["id"]: item for item in load_items(args)}
     asr_hypotheses = {(row["id"], row["condition"]): row["hyp"] for row in read_jsonl(args.out / "asr.jsonl")}
@@ -189,8 +199,10 @@ def llm_stage(args):
                     "ref_question": item["ref_text"], "context": item["context"], "answers": item["answers"],
                     "answerable": item["answerable"], "response": completion.text,
                     "reasoning_text": completion.reasoning_text, "ttft_s": completion.ttft_s,
-                    "total_s": completion.total_s, "timings": completion.timings}
+                    "total_s": completion.total_s, "timings": completion.timings,
+                    "gpu": sysinfo.dgpu_state(dgpu_card_dir)}  # sampled right after the request, to spot throttling
 
+        dgpu_card_dir = sysinfo.dgpu_card()
         out_path = args.out / "llm.jsonl"
         count = run_pending(work_keys("llm", tuple(items_by_id.values()), args.conditions), process, out_path,
                             args.warmup)
@@ -264,7 +276,11 @@ def main():
         run_stages(args.stages, forwarded_args)
         return
     os.environ.setdefault("HF_HUB_OFFLINE", "1")  # models are local; the ASR loader would otherwise hit the network
-    prepare_output(args.out / f"{args.child_stage}.jsonl", force=False)
+    stage_output = args.out / f"{args.child_stage}.jsonl"
+    prepare_output(stage_output, force=False)
+    if not pending_keys(stage_work_keys(args), stage_output):
+        print(f"{args.child_stage}: nothing pending in {stage_output}, model not loaded", flush=True)
+        return
     {"asr": asr_stage, "llm": llm_stage, "judge": judge_stage}[args.child_stage](args)
 
 

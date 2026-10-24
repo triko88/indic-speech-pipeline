@@ -98,3 +98,10 @@ def test_each_stage_runs_in_its_own_child_process():
                         runner=lambda command, check: launched_commands.append(command))
     assert [command[command.index("--_stage") + 1] for command in launched_commands] == ["asr", "llm", "judge"]
     assert all(command[command.index("--limit") + 1] == "5" for command in launched_commands)
+
+
+def test_pending_keys_lets_stages_skip_model_loading(tmp_path):
+    out_path = tmp_path / "asr.jsonl"
+    write_jsonl(out_path, [{"id": "hi_000", "condition": "clean"}])
+    assert run_eval.pending_keys((("hi_000", "clean"), ("hi_001", "clean")), out_path) == (("hi_001", "clean"),)
+    assert run_eval.pending_keys((("hi_000", "clean"),), out_path) == ()

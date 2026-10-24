@@ -55,3 +55,19 @@ def test_ac_online_reads_mains_supply(tmp_path):
 
 def test_ac_online_unknown_without_supply(tmp_path):
     assert sysinfo.ac_online(tmp_path) is None
+
+
+def test_dgpu_state_reads_hwmon_temps_clock_and_power(tmp_path):
+    hwmon_dir = tmp_path / "card1" / "device" / "hwmon" / "hwmon3"
+    hwmon_dir.mkdir(parents=True)
+    for file_name, value in (("temp1_input", 68000), ("temp2_input", 75500), ("freq1_input", 2625000000),
+                             ("power1_average", 45000000)):
+        (hwmon_dir / file_name).write_text(f"{value}\n")
+    assert sysinfo.dgpu_state(tmp_path / "card1") == {"edge_c": 68.0, "junction_c": 75.5, "sclk_mhz": 2625.0,
+                                                      "power_w": 45.0}
+
+
+def test_dgpu_state_tolerates_missing_sensors(tmp_path):
+    (tmp_path / "card1" / "device" / "hwmon" / "hwmon3").mkdir(parents=True)
+    assert sysinfo.dgpu_state(tmp_path / "card1") == {"edge_c": None, "junction_c": None, "sclk_mhz": None,
+                                                      "power_w": None}

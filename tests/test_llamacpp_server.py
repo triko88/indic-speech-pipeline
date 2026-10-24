@@ -100,6 +100,7 @@ def test_server_command_contains_contract_flags():
     assert command[command.index("--reasoning-format") + 1] == llamacpp_server.REASONING_FORMAT
     assert command[-2:] == ("--n-cpu-moe", "8")
     assert {"--jinja", "--no-mmproj"} <= set(command)
+    assert command[command.index("--cache-ram") + 1] == "0"  # no host-RAM prompt cache (8 GB by default)
 
 
 FAKE_SERVER_SOURCE = '''

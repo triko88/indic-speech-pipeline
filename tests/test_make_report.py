@@ -150,3 +150,26 @@ def test_report_builds_every_section_from_a_run_dir(tmp_path):
                     "## Judge agreement", "## Human audit", "## Qualitative examples"):
         assert heading in report_text
     assert "limited validity" in report_text
+
+
+def test_latency_flags_throttled_requests_and_gpu_state():
+    fast_timings = {"prompt_n": 500, "prompt_ms": 500.0, "predicted_n": 5, "predicted_ms": 70.0}
+    slow_timings = {"prompt_n": 500, "prompt_ms": 2400.0, "predicted_n": 5, "predicted_ms": 1000.0}
+    llm_rows = tuple({**llm_row(f"q{index}", "oracle", CORRECT), "timings": fast_timings,
+                      "gpu": {"edge_c": 70.0, "junction_c": 80.0 + index, "sclk_mhz": 2600.0, "power_w": 60.0}}
+                     for index in range(8)) + tuple({**llm_row(f"s{index}", "oracle", CORRECT), "timings": slow_timings}
+                                                    for index in range(2))
+    table = {row["lang"]: row for row in make_report.latency_table((), llm_rows)}
+    assert table["hi"]["throttled_requests"] == 2  # server prompt speed < 50% of the run's median
+    assert table["hi"]["gpu_sclk_mhz_p50"] == pytest.approx(2600.0)
+    assert table["hi"]["gpu_junction_c_max"] == pytest.approx(87.0)
+
+
+def test_report_shows_latency_for_extra_runs(tmp_path):
+    for run_name in ("main", "rerun"):
+        (tmp_path / run_name).mkdir()
+        (tmp_path / run_name / "llm.jsonl").write_text(
+            json.dumps(llm_row("q0", "oracle", CORRECT), ensure_ascii=False) + "\n", encoding="utf-8")
+    report_text = make_report.build_report(tmp_path / "main", selection_dir=tmp_path / "missing", variance_dirs=(),
+                                           latency_runs=(tmp_path / "rerun",))
+    assert "### Latency: main" in report_text and "### Latency: rerun" in report_text

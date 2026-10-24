@@ -87,8 +87,8 @@ def flag_supported(help_text, flag):
 
 def server_command(server_bin, gguf, vk_device, ngl, ctx, port, extra_args):
     return (str(server_bin), "-m", str(gguf), "-dev", vk_device, "-ngl", str(ngl), "-c", str(ctx), "-np", "1",
-            "--jinja", "--reasoning-format", REASONING_FORMAT, "--no-mmproj", "-lv", "4", "--port", str(port),
-            *extra_args)
+            "--jinja", "--reasoning-format", REASONING_FORMAT, "--no-mmproj", "--cache-ram", "0",  # 8 GB host cache otherwise
+            "-lv", "4", "--port", str(port), *extra_args)
 
 
 def log_tail(log_path):
