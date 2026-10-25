@@ -65,6 +65,8 @@ def test_linguistic_table_compares_text_conditions_with_oracle():
     assert table["scramble"]["oracle_correctness"] == pytest.approx(0.5)
     assert table["wrong_passage"]["hallucination_rate"] == pytest.approx(0.5)
     assert table["wrong_passage"]["abstention_recall"] == pytest.approx(0.5)
+    # a different task from oracle (unanswerable by construction): no paired comparison
+    assert (table["wrong_passage"]["delta_pp"], table["wrong_passage"]["p_vs_oracle"]) == (None, None)
 
 
 def test_acoustic_only_tables_ignore_text_conditions():
@@ -170,10 +172,66 @@ def test_audit_sheet_is_40_rows_stratified_blind_and_kappa_on_fill(tmp_path):
         writer.writeheader()
         writer.writerows(sheet_rows)
     judge_rows = tuple(make_judge_row(row, verdicts[(row["id"], row["condition"])].label) for row in rows)
-    audit = make_report.audit_agreement(sheet_path, verdicts, judge_rows)
-    assert audit["n"] == 40
+    audit = make_report.audit_agreement(sheet_path, verdicts, judge_rows)[0]
+    assert (audit["lang"], audit["n"]) == ("all", 40)
     assert audit["kappa_human_rule"] == pytest.approx(1.0)
     assert audit["kappa_human_judge"] == pytest.approx(1.0)
+
+
+def fill_sheet(sheet_path, label_for_row, encoding="utf-8"):
+    """Write human labels into an audit sheet the way a spreadsheet app saves it."""
+    with sheet_path.open(encoding="utf-8") as sheet_file:
+        sheet_rows = list(csv.DictReader(sheet_file))
+    with sheet_path.open("w", encoding=encoding, newline="") as sheet_file:
+        writer = csv.DictWriter(sheet_file, fieldnames=list(sheet_rows[0]))
+        writer.writeheader()
+        writer.writerows({**sheet_row, "human_label": label_for_row(sheet_row)} for sheet_row in sheet_rows)
+
+
+def test_audit_reads_spreadsheet_bom_and_label_synonyms(tmp_path):
+    rows = many_rows()
+    verdicts = make_report.rule_verdicts(rows)
+    sheet_path = tmp_path / "audit_sheet.csv"
+    make_report.write_audit_sheet(rows, verdicts, sheet_path, size=40, seed=0)
+    spoken_labels = {"FALSE_ABSTAIN": "missed", "WRONG_GROUNDED": "Wrong"}
+    fill_sheet(sheet_path, lambda sheet_row: spoken_labels.get(
+        verdicts[(sheet_row["id"], sheet_row["condition"])].label, verdicts[(sheet_row["id"], sheet_row["condition"])].label),
+        encoding="utf-8-sig")
+    judge_rows = tuple(make_judge_row(row, verdicts[(row["id"], row["condition"])].label) for row in rows)
+    audit = make_report.audit_agreement(sheet_path, verdicts, judge_rows)[0]
+    assert audit["n"] == 40 and audit["kappa_human_rule"] == pytest.approx(1.0)
+
+
+def test_audit_justified_abstain_counts_as_false_abstain_and_unknown_labels_raise(tmp_path):
+    rows = many_rows()
+    verdicts = make_report.rule_verdicts(rows)
+    sheet_path = tmp_path / "audit_sheet.csv"
+    make_report.write_audit_sheet(rows, verdicts, sheet_path, size=40, seed=0)
+    fill_sheet(sheet_path, lambda sheet_row: "JUSTIFIED_ABSTAIN" if verdicts[
+        (sheet_row["id"], sheet_row["condition"])].label == "FALSE_ABSTAIN" else verdicts[
+        (sheet_row["id"], sheet_row["condition"])].label)
+    judge_rows = tuple(make_judge_row(row, verdicts[(row["id"], row["condition"])].label) for row in rows)
+    assert make_report.audit_agreement(sheet_path, verdicts, judge_rows)[0]["kappa_human_rule"] == pytest.approx(1.0)
+    fill_sheet(sheet_path, lambda sheet_row: "MAYBE")
+    with pytest.raises(ValueError, match="MAYBE"):
+        make_report.audit_agreement(sheet_path, verdicts, judge_rows)
+
+
+def test_audit_kappas_per_language_for_rule_and_judge(tmp_path):
+    rows = many_rows() + tuple({**row, "id": f"e{row['id']}", "lang": "en"} for row in many_rows())
+    verdicts = make_report.rule_verdicts(rows)
+    sheet_path = tmp_path / "audit_sheet.csv"
+    make_report.write_audit_sheet(rows, verdicts, sheet_path, size=40, seed=0)
+    fill_sheet(sheet_path, lambda sheet_row: verdicts[(sheet_row["id"], sheet_row["condition"])].label)
+    # the judge calls every hallucination wrong-but-grounded: perfect 5-way agreement is lost, hallucination κ is 0
+    judge_rows = tuple(make_judge_row(row, "WRONG_GROUNDED" if label == "HALLUCINATED" else label)
+                       for row in rows for label in [verdicts[(row["id"], row["condition"])].label])
+    audit = {row["lang"]: row for row in make_report.audit_agreement(sheet_path, verdicts, judge_rows)}
+    assert list(audit) == ["all", "en", "hi"]
+    assert audit["en"]["n"] + audit["hi"]["n"] == audit["all"]["n"] == 40
+    assert audit["all"]["kappa_halluc_rule"] == pytest.approx(1.0)
+    assert audit["all"]["kappa_halluc_judge"] == pytest.approx(0.0)
+    assert audit["all"]["kappa_correct_judge"] == pytest.approx(1.0)
 
 
 def test_report_builds_every_section_from_a_run_dir(tmp_path):
@@ -192,6 +250,7 @@ def test_report_builds_every_section_from_a_run_dir(tmp_path):
                     "## Judge agreement", "## Human audit", "## Qualitative examples"):
         assert heading in report_text
     assert "limited validity" in report_text
+    assert "Gold overrides" in report_text
 
 
 def test_latency_flags_throttled_requests_and_gpu_state():
@@ -229,3 +288,28 @@ def test_stale_llm_selection_is_reported_not_fatal(tmp_path, monkeypatch):
     monkeypatch.setattr(make_report, "QUESTIONS_PATH", questions_path)
     section_text = make_report.selection_section(selection_dir)
     assert "stale" in section_text and "qa_ta_000" in section_text and "make select" in section_text
+
+
+def test_report_scores_against_overridden_gold(tmp_path, monkeypatch):
+    from indic_s2t.gold import GoldOverride
+    run_dir = tmp_path / "main"
+    run_dir.mkdir()
+    rows = (llm_row("q0", "oracle", HALLUCINATED), llm_row("q0", "clean", HALLUCINATED))
+    (run_dir / "llm.jsonl").write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+                                       encoding="utf-8")
+    monkeypatch.setattr(make_report, "load_gold_overrides", lambda: {"q0": GoldOverride(
+        question="ताजमहल कहाँ है", answers=(HALLUCINATED,), answerable=True, evidence="test")})
+    report_text = make_report.build_report(run_dir, selection_dir=tmp_path / "missing", variance_dirs=())
+    assert "Gold overrides (`gold_overrides.toml`): 1 items, 2 rows re-scored" in report_text
+    assert "| hi | clean | 1 | 1.000 |" in report_text  # «मुंबई» is now the gold answer
+
+
+def test_swap_anchor_repair_rate_counts_answers_to_the_original_question():
+    # q0: the model answers the original question (a repair, still HALLUCINATED); q1 abstains; q2 makes something up
+    rows = (llm_row("q0", "oracle", CORRECT), llm_row("q1", "oracle", CORRECT), llm_row("q2", "oracle", CORRECT),
+            llm_row("q0", "swap_anchor", CORRECT, answerable=False),
+            llm_row("q1", "swap_anchor", FALSE_ABSTAIN, answerable=False),
+            llm_row("q2", "swap_anchor", HALLUCINATED, answerable=False))
+    table = {row["condition"]: row for row in make_report.linguistic_table(rows, make_report.rule_verdicts(rows))}
+    assert table["swap_anchor"]["hallucination_rate"] == pytest.approx(2 / 3)  # strict: every answer counts
+    assert table["swap_anchor"]["repair_rate"] == pytest.approx(1 / 3)

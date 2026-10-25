@@ -14,6 +14,7 @@ import regex
 from indic_s2t.textnorm import aksharas, normalize, words
 
 TEXT_CONDITIONS = ("scramble", "drop_head", "drop_tail", "swap_anchor", "wrong_passage")
+SEMANTIC_CONDITIONS = ("swap_anchor", "wrong_passage")  # unanswerable by construction
 TRAILING_PUNCTUATION = regex.compile(r"\s*[\p{P}\p{S}]+$")
 LETTERS_ONLY = regex.compile(r"[\p{L}\p{M}]+")
 MIN_REPLACEMENT_AKSHARAS = 3

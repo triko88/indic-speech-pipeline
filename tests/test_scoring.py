@@ -118,3 +118,10 @@ def test_judge_messages_contain_inputs_and_strict_reminder():
         HINDI_PASSAGE, "q", ("a",), "r", "hi", strict=True))
     assert "ONLY" in strict_joined and len(strict_joined) > len("\n".join(
         message["content"] for message in judge_messages(HINDI_PASSAGE, "q", ("a",), "r", "hi")))
+
+
+def test_judge_prompt_separates_support_from_correctness_and_abstention():
+    # the 9B judge read "supported" as "supported as the answer", and called short wrong answers abstentions
+    system_prompt = judge_messages(HINDI_PASSAGE, "q", ("a",), "r", "hi")[0]["content"]
+    assert "even when it does not answer the question" in system_prompt
+    assert "not an abstention" in system_prompt

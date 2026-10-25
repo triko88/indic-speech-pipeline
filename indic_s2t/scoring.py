@@ -116,10 +116,12 @@ JUDGE_SYSTEM_PROMPT = (
     "You grade answers to reading-comprehension questions in {language}. "
     "You are given a passage, a question, the gold answers (empty if the passage does not answer the question) "
     "and a model response. Decide:\n"
-    '- "abstained": true if the response declines to answer (e.g. NO_ANSWER, "not in the passage").\n'
+    '- "abstained": true only if the response declines to answer (e.g. NO_ANSWER, "not in the passage"). '
+    "A short, partial or wrong answer is still an answer, not an abstention.\n"
     '- "correct": true if the response gives the same answer as one of the gold answers '
     "(inflected forms, extra particles or case suffixes are fine).\n"
-    '- "supported": true if the response content is stated in or directly entailed by the passage.\n'
+    '- "supported": true if the response content is stated in or directly entailed by the passage, '
+    "even when it does not answer the question; false only if it adds content the passage does not contain.\n"
     'Reply with a single JSON object: {{"abstained": <bool>, "correct": <bool>, "supported": <bool>}}'
 )
 JUDGE_STRICT_REMINDER = (

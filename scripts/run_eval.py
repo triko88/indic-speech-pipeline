@@ -247,9 +247,12 @@ def llm_stage(args):
 
 def judge_stage(args):
     from indic_s2t import llm
+    from indic_s2t.gold import corrected_rows, load_gold_overrides
     from indic_s2t.scoring import judge_messages
 
-    llm_rows = {(row["id"], row["condition"]): row for row in read_jsonl(args.out / "llm.jsonl")}
+    # The judge grades against the reviewed gold, the same gold make_report scores with.
+    llm_rows = {(row["id"], row["condition"]): row
+                for row in corrected_rows(read_jsonl(args.out / "llm.jsonl"), load_gold_overrides())}
     with server_for(args, args.judge_gguf, "judge") as server_info:
         def process(key):
             llm_row = llm_rows[key]

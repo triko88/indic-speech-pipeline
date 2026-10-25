@@ -27,8 +27,8 @@ def test_unknown_key_is_rejected(tmp_path):
         load_languages(typo_file)
 
 
-def test_repo_file_has_hindi_english_sanskrit():
-    assert tuple(LANGUAGES) == ("hi", "en", "sa")
+def test_repo_file_has_hindi_english_tamil():
+    assert tuple(LANGUAGES) == ("hi", "en", "ta")
     assert LANGUAGES["en"].fleurs == "en_us" and LANGUAGES["en"].squad_url
-    assert LANGUAGES["sa"].kathbath == "sanskrit" and LANGUAGES["sa"].indicqa is None
+    assert LANGUAGES["ta"].kathbath == "tamil" and LANGUAGES["ta"].indicqa == "ta"
     assert all("no answer" in language.abstain_phrases for language in LANGUAGES.values())

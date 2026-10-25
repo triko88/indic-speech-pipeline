@@ -1,0 +1,79 @@
+# Reviewed corrections to dataset gold labels, applied at scoring time (indic_s2t/gold.py).
+# One table per QA item id:
+#   question    the item's gold question, verbatim: a guard so a re-sampled id never receives another question's gold
+#   answers     corrected gold answers ([] when unanswerable)
+#   answerable  corrected answerability
+#   evidence    the passage text that justifies the correction
+# Add an entry only after checking the passage; see runs/baseline_correctness_analysis.md.
+
+# IndicQA gold "मनमोहन सिंह" led the UPA, not the NDA.
+[qa_hi_010]
+question = "एनडीए गवर्नमेंट की पहली सरकार का नेतृत्व कौन कर रहे थे ?"
+answers = ["अटल बिहारी वाजपेयी"]
+answerable = true
+evidence = "भाजपा के अटल बिहारी वाजपेयी के नेतृत्व में राष्ट्रीय जनतांत्रिक गठबंधन (राजग, या एनडीए) नाम के इस गठबंधन की सरकार"
+
+# IndicQA marks it unanswerable; the passage states the years.
+[qa_hi_006]
+question = "इंदौर मध्य भारत की राजधानी किस वर्ष रही है ?"
+answers = ["१९५४-५६"]
+answerable = true
+evidence = "यह ब्रिटिश मध्य भारत संस्था का मुख्यालय एवं मध्य भारत की ग्रीष्मकालीन राजधानी (१९५४-५६) था।"
+
+# IndicQA gold "அனுமன்" (Hanuman) repeats the subject of "Where did Hanuman return?".
+[qa_ta_022]
+question = "அனுமன் எங்கு திரும்பினார்?"
+answers = ["கிஷ்கிந்தா"]
+answerable = true
+evidence = "மகிழ்ச்சியான செய்திகளுடன் கிஷ்கிந்தாவுக்குத் திரும்புகிறார்."
+
+# IndicQA gold 1947 is when Madras became the capital; the renaming was 1969.
+[qa_ta_046]
+question = "சென்னை மாகாணங்களின் பெயர் எப்போது மாற்றப்பட்டது?"
+answers = ["1969"]
+answerable = true
+evidence = "சென்னை மாகாணம் 1969 ஆம் ஆண்டு 'தமிழ்நாடு' என்று பெயர் மாற்றம் செய்யப்பட்டது."
+
+# IndicQA marks it unanswerable; the passage states the completion year.
+[qa_ta_038]
+question = "முகலாயப் பேரரசர் ஷாஜகான் எந்த ஆண்டில் செங்கோட்டையின் கட்டுமானத்தை முடித்தார்?"
+answers = ["1648"]
+answerable = true
+evidence = "முகலாயப் பேரரசர் ஷாஜகான் 1638 ஆம் ஆண்டு இந்த மிகப்பெரிய கோட்டையைக் கட்டத் தொடங்கி, 1648 ஆம் ஆண்டு கட்டி முடித்தார்."
+
+# IndicQA gold Windham was defeated *by* Tope; Tope fell back when Campbell's British forces counter-attacked.
+# Confirmed by the human audit (runs/main/audit_sheet_labeled.csv).
+[qa_ta_043]
+question = "டோப்பை தோற்கடித்தது யார்?"
+answers = ["சர் கொலின் காம்ப்பெல்லின் கீழ் ஆங்கிலேயர்கள்", "கொலின் காம்ப்பெல்"]
+answerable = true
+evidence = "எவ்வாறாயினும், சர் கொலின் காம்ப்பெல்லின் கீழ் ஆங்கிலேயர்கள் எதிர் தாக்குதல் நடத்தியபோது தோபே"
+
+# IndicQA gold comes from a later sentence (soldiers entering Indian territory, Sept 1965); the sentence about
+# Jammu & Kashmir names armed men from Pakistan. Both are accepted. Confirmed by the human audit.
+[qa_ta_058]
+question = "பாகிஸ்தானில் இருந்து ஜம்மு -காஷ்மீருக்குள் நுழைந்தது யார்?"
+answers = ["பாகிஸ்தான் போர் வீரர்களும்", "பாகிஸ்தானிலிருந்து ஆயுதம் தாங்கியோர்"]
+answerable = true
+evidence = "பாகிஸ்தானிலிருந்து ஆயுதம் தாங்கியோர் ஜம்மு காஷ்மீர் மாநிலத்தில் ஊடுருவினர்."
+
+# IndicQA marks it unanswerable; the passage lists jewellery, clothes and spices in the old city's markets.
+[qa_hi_014]
+question = "दिल्ली में कौन सी जगह गहनों, जरी की साड़ियों और मसालों के लिए प्रसिद्ध है?"
+answers = ["पुराने शहर के बाजारों", "पुरानी दिल्ली"]
+answerable = true
+evidence = "पुराने शहर के बाजारों में हर एक प्रकार का सामान मिलेगा। तेल में डूबे चटपटे आम, नींबू, आदि के अचारों से लेकर मंहगे हीरे जवाहरात, जेवर तक; दुल्हन के अलंकार, कपड़ों के थान, तैयार कपड़े, मसाले"
+
+# Ambiguous: Bhauma ruled the kingdom Pragjyotisha, which lies in today's Assam province. Both are accepted.
+[qa_ta_019]
+question = "பாமன் ஆட்சி செய்த மாகாணத்தின் பெயர் என்ன?"
+answers = ["அசாம்", "பிராக்ஜோதிசா"]
+answerable = true
+evidence = "பின்பு அவன் இன்றைய அசாம் மாகாணத்தில் உள்ள பிராக்ஜோதிசா என்னும் நாட்டை ஆண்டு கொண்டு இருந்தான்."
+
+# Ambiguous: English "Earth" comes from Anglo-Saxon "erda"; the word's origin is arguably erda. Both are accepted.
+[qa_ta_021]
+question = "பூமி என்ற சொல் எங்கிருந்து வந்தது?"
+answers = ['"எர்த்" (Earth)', "எர்டா (erda)"]
+answerable = true
+evidence = "ஆங்கிலோ-சாக்சன் வார்த்தையான எர்டா (erda) என்பதிலிருந்து உருவானது."

@@ -14,8 +14,10 @@ from pathlib import Path
 import numpy as np
 
 from indic_s2t import metrics
-from indic_s2t.perturb import TEXT_CONDITIONS
-from indic_s2t.scoring import label_response, qa_rates
+from indic_s2t.gold import corrected_rows, load_gold_overrides
+from indic_s2t.perturb import SEMANTIC_CONDITIONS, TEXT_CONDITIONS
+from indic_s2t.scoring import is_abstention, label_response, qa_rates
+from indic_s2t.scoring import is_correct as matches_gold  # make_report.is_correct takes a Verdict
 from indic_s2t.textnorm import normalize, words
 
 ORACLE = "oracle"
@@ -23,6 +25,9 @@ GOLD_TEXT_CONDITIONS = (ORACLE, *TEXT_CONDITIONS)  # the LLM gets gold-derived t
 LENGTH_BUCKETS = ("3-7", "8-11", "12+")
 CORRECT_LABELS = ("CORRECT", "CORRECT_ABSTAIN")
 RULE_LABELS = ("CORRECT", "CORRECT_ABSTAIN", "FALSE_ABSTAIN", "WRONG_GROUNDED", "HALLUCINATED")
+# Words auditors write for a rule label. An abstention on an answerable question is FALSE_ABSTAIN even when the
+# (degraded) question justified it: the label records what happened, not whether it was excusable.
+HUMAN_LABEL_SYNONYMS = {"MISSED": "FALSE_ABSTAIN", "JUSTIFIED_ABSTAIN": "FALSE_ABSTAIN", "WRONG": "WRONG_GROUNDED"}
 FAILURE_TYPES = ("FALSE_ABSTAIN", "WRONG_GROUNDED", "HALLUCINATED")
 WER_BUCKETS = ("0", "(0,20%]", "(20,50%]", ">50%")
 AUDIT_SIZE = 40
@@ -38,7 +43,8 @@ lowercase. Nukta stripping is reported as a separate column (`WER no-nukta`).
 **ASR.** Own Levenshtein alignment with S/D/I counts. Corpus WER = Σ(S+D+I) / Σ reference words. CER over Unicode code
 points, spaces kept. Akshara-CER over grapheme clusters (`regex` `\\X`; a Devanagari conjunct is one cluster; for Latin
 script each letter is its own). Exact match = normalised hypothesis equals normalised reference. WER 95% CI: percentile
-bootstrap over utterances, 2000 resamples (ignores speaker clustering).
+bootstrap over utterances, 2000 resamples (ignores speaker clustering). Compare languages on akshara-CER, not WER: one
+wrong akshara costs a whole word, and Tamil words average about twice as many aksharas as Hindi ones.
 
 **Response labels** (rule-based, mutually exclusive). Answerable question: `FALSE_ABSTAIN` if the response contains
 `NO_ANSWER` or a per-language abstain phrase; else `CORRECT` if a normalised gold answer of at least 2 aksharas is a
@@ -60,8 +66,11 @@ item). Syntactic / structural: `scramble` (word order shuffled), `drop_head` / `
 the tail carries the verb and question particle in SOV languages). Semantic: `swap_anchor` (the longest question word
 found in the passage is replaced by a word of at least its length from another passage: a false premise) and
 `wrong_passage` (another passage that lacks the gold answers). Both semantic conditions are unanswerable by
-construction, so abstention recall = correctness and every answer is `HALLUCINATED`. Δ and McNemar p are paired
-against `oracle` on the same items. Syntactic difficulty: correctness by gold-question length (normalised words).
+construction: abstaining is `CORRECT_ABSTAIN`, any answer is `HALLUCINATED`. `repair_rate` (`swap_anchor` only) is the
+share of rows answering the original question correctly: the model repaired the swapped word, as the ASR-aware prompt
+asks. Those count as hallucinations here, since the human audit called a repair acceptable only when the swap left the
+question's meaning intact. Δ and McNemar p are paired against `oracle` on the same items, for the syntactic conditions
+only. Syntactic difficulty: correctness by gold-question length (normalised words).
 
 **Latency.** 3 warm-ups per stage excluded; `time.perf_counter`. ASR: seconds per utterance, RTF = Σ ASR time / Σ audio
 time, and p95 of per-utterance RTF. LLM: client TTFT and total time; server prompt and decode tokens/s from llama-server
@@ -161,10 +170,27 @@ def attribution_table(llm_rows, verdicts, keep_condition=is_acoustic):
     return table
 
 
+def repair_rates(llm_rows):
+    """Per language: share of swap_anchor rows whose answer is correct for the original, unswapped question."""
+    oracle_answers = {row["id"]: row["answers"] for row in llm_rows if row["condition"] == ORACLE}
+    repaired_by_lang = defaultdict(list)
+    for row in llm_rows:
+        if row["condition"] == "swap_anchor" and row["id"] in oracle_answers:
+            original_gold = oracle_answers[row["id"]]
+            repaired_by_lang[row["lang"]].append(bool(original_gold) and not is_abstention(row["response"], row["lang"])
+                                                 and matches_gold(row["response"], original_gold, row["lang"]))
+    return {lang: sum(repaired) / len(repaired) for lang, repaired in repaired_by_lang.items()}
+
+
 def linguistic_table(llm_rows, verdicts):
-    """QA rates per text condition, with correctness paired against oracle on the same items."""
+    """QA rates per text condition, with correctness paired against oracle on the same items. Semantic conditions
+    ask a different (unanswerable) task, so they get no paired comparison."""
     qa_rows = {(row["lang"], row["condition"]): row for row in qa_table(llm_rows, verdicts)}
-    return [{**qa_rows[(row["lang"], row["condition"])], **row}
+    lang_repair_rates = repair_rates(llm_rows)
+    unpaired = {"oracle_correctness": None, "delta_pp": None, "p_vs_oracle": None}
+    return [{**qa_rows[(row["lang"], row["condition"])], **row,
+             **(unpaired if row["condition"] in SEMANTIC_CONDITIONS else {}),
+             "repair_rate": lang_repair_rates.get(row["lang"]) if row["condition"] == "swap_anchor" else None}
             for row in attribution_table(llm_rows, verdicts, keep_condition=lambda condition: condition in TEXT_CONDITIONS)]
 
 
@@ -326,17 +352,41 @@ def write_audit_sheet(llm_rows, verdicts, sheet_path, size=AUDIT_SIZE, seed=0):
                              "response": row["response"], "context": row["context"], "human_label": ""})
 
 
+def human_label(sheet_row):
+    written_label = sheet_row["human_label"].strip().upper()
+    label = HUMAN_LABEL_SYNONYMS.get(written_label, written_label)
+    if label not in RULE_LABELS:
+        raise ValueError(f"audit row {sheet_row['id']} ({sheet_row['condition']}): label {written_label!r} is not one "
+                         f"of {', '.join(RULE_LABELS)} or {', '.join(HUMAN_LABEL_SYNONYMS)}")
+    return label
+
+
+def kappa_columns(human_labels, other_labels, suffix):
+    """κ 5-way, κ on correct vs not, κ on hallucinated vs not; None when there is nothing to compare."""
+    if not human_labels:
+        return {f"kappa_human_{suffix}": None, f"kappa_correct_{suffix}": None, f"kappa_halluc_{suffix}": None}
+    return {f"kappa_human_{suffix}": metrics.cohen_kappa(human_labels, other_labels),
+            f"kappa_correct_{suffix}": metrics.cohen_kappa([label in CORRECT_LABELS for label in human_labels],
+                                                           [label in CORRECT_LABELS for label in other_labels]),
+            f"kappa_halluc_{suffix}": metrics.cohen_kappa([label == "HALLUCINATED" for label in human_labels],
+                                                          [label == "HALLUCINATED" for label in other_labels])}
+
+
 def audit_agreement(sheet_path, verdicts, judge_rows):
-    with Path(sheet_path).open(encoding="utf-8") as sheet_file:
-        filled_rows = [row for row in csv.DictReader(sheet_file) if row["human_label"].strip()]
+    """One row for all languages, then one per language. utf-8-sig: spreadsheet apps save a byte-order mark."""
+    with Path(sheet_path).open(encoding="utf-8-sig") as sheet_file:
+        filled_rows = [(row, human_label(row)) for row in csv.DictReader(sheet_file) if row["human_label"].strip()]
     judge_by_key = {(row["id"], row["condition"]): row["judge_label"] for row in judge_rows}
-    human_labels = [row["human_label"].strip().upper() for row in filled_rows]
-    rule_labels = [verdicts[(row["id"], row["condition"])].label for row in filled_rows]
-    judged = [(human_label, judge_by_key[(row["id"], row["condition"])])
-              for human_label, row in zip(human_labels, filled_rows) if (row["id"], row["condition"]) in judge_by_key]
-    return {"n": len(filled_rows),
-            "kappa_human_rule": metrics.cohen_kappa(human_labels, rule_labels) if filled_rows else None,
-            "kappa_human_judge": metrics.cohen_kappa(*zip(*judged)) if judged else None}
+    table = []
+    for lang in ("all", *sorted({row["lang"] for row, _ in filled_rows})):
+        lang_rows = [(row, label) for row, label in filled_rows if lang in ("all", row["lang"])]
+        judged = [(label, judge_by_key[(row["id"], row["condition"])]) for row, label in lang_rows
+                  if (row["id"], row["condition"]) in judge_by_key]
+        table.append({"lang": lang, "n": len(lang_rows),
+                      **kappa_columns([label for _, label in lang_rows],
+                                      [verdicts[(row["id"], row["condition"])].label for row, _ in lang_rows], "rule"),
+                      **kappa_columns([label for label, _ in judged], [label for _, label in judged], "judge")})
+    return table
 
 
 def qualitative_examples(llm_rows, verdicts, per_type=EXAMPLES_PER_TYPE):
@@ -437,7 +487,9 @@ def latency_section(run_dirs):
 
 def build_report(run_dir, selection_dir, variance_dirs, audit_filled=None, latency_runs=()):
     run_dir = Path(run_dir)
-    asr_rows, llm_rows, judge_rows = (read_jsonl(run_dir / f"{stage}.jsonl") for stage in ("asr", "llm", "judge"))
+    asr_rows, run_llm_rows, judge_rows = (read_jsonl(run_dir / f"{stage}.jsonl") for stage in ("asr", "llm", "judge"))
+    llm_rows = corrected_rows(run_llm_rows, load_gold_overrides())
+    rescored_ids = [new_row["id"] for old_row, new_row in zip(run_llm_rows, llm_rows) if old_row != new_row]
     verdicts = rule_verdicts(llm_rows)
     sheet_path = run_dir / "audit_sheet.csv"
     if llm_rows and not sheet_path.exists():  # never overwrite a sheet that may already hold human labels
@@ -453,6 +505,7 @@ def build_report(run_dir, selection_dir, variance_dirs, audit_filled=None, laten
     sections = [
         f"# Speech → text-response evaluation ({', '.join(dict.fromkeys(row['lang'] for row in asr_rows))})\n",
         "## Setup\n", setup_section(run_dir),
+        f"Gold overrides (`gold_overrides.toml`): {len(set(rescored_ids))} items, {len(rescored_ids)} rows re-scored.\n",
         "## Metric definitions\n", METRIC_DEFINITIONS,
         "## LLM selection and tokenizer fertility\n", selection_section(selection_dir),
         "## ASR\n", markdown_table(asr_table(asr_rows), ("track", "lang", "condition", "n", "wer", "wer_ci", "wer_no_nukta",
@@ -468,10 +521,12 @@ def build_report(run_dir, selection_dir, variance_dirs, audit_filled=None, laten
                                                            ("bucket", "n", "correctness", "correctness_ci")),
         "## Linguistic robustness\n",
         "Gold question text perturbed, no ASR (see Metric definitions). Δ and p are against `oracle` on the same items; "
-        "`swap_anchor` and `wrong_passage` are unanswerable, so their correctness is abstention recall.\n\n",
+        "`swap_anchor` and `wrong_passage` are unanswerable, so correctness is abstention recall; `repair_rate` is the "
+        "part of `swap_anchor`'s hallucination rate that answers the original question.\n\n",
         markdown_table(linguistic_table(llm_rows, verdicts), (
             "lang", "condition", "n", "correctness", "oracle_correctness", "delta_pp", "p_vs_oracle",
-            "answerable_accuracy", "abstention_recall", "false_abstain_rate", "hallucination_rate", "off_script_rate")),
+            "answerable_accuracy", "abstention_recall", "false_abstain_rate", "hallucination_rate", "repair_rate",
+            "off_script_rate")),
         "## Correctness by question length\n", markdown_table(length_table(llm_rows, verdicts), (
             "lang", "condition", "bucket", "n", "correctness", "correctness_ci")),
         "## Latency\n",
@@ -487,8 +542,11 @@ def build_report(run_dir, selection_dir, variance_dirs, audit_filled=None, laten
         if agreement else "_judge stage not run_\n", confusion_text,
         "## Human audit\n",
         f"Blind sheet: `{sheet_path}` ({AUDIT_SIZE} rows stratified by rule label; fill `human_label` with one of "
-        f"{', '.join(RULE_LABELS)}, then rerun with `--audit_filled`).\n\n",
-        markdown_table([audit], ("n", "kappa_human_rule", "kappa_human_judge")) if audit else "_not filled yet_\n",
+        f"{', '.join(RULE_LABELS)}, then rerun with `--audit_filled`). Also accepted: "
+        f"{', '.join(f'{word} = {label}' for word, label in HUMAN_LABEL_SYNONYMS.items())}.\n\n",
+        markdown_table(audit, ("lang", "n", "kappa_human_rule", "kappa_human_judge", "kappa_correct_rule",
+                               "kappa_correct_judge", "kappa_halluc_rule", "kappa_halluc_judge"))
+        if audit else "_not filled yet_\n",
         "## Qualitative examples\n", examples_section(qualitative_examples(llm_rows, verdicts)),
     ]
     return "\n".join(sections)
