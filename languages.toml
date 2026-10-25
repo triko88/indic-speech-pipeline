@@ -29,22 +29,22 @@ squad_url = "https://rajpurkar.github.io/SQuAD-explorer/dataset/dev-v2.0.json"
 abstain_phrases = ["no answer", "not mentioned", "not stated", "does not contain", "not provided", "cannot be determined"]
 tts_speakers = ["Mary", "Thoma"]
 
-[sa]
-name = "Sanskrit"
-script_block = [0x0900, 0x097F]
-indicnlp = true
-asr_model = "ai4bharat/indic-conformer-600m-multilingual"
-kathbath = "sanskrit"
+#[sa]
+#name = "Sanskrit"
+#script_block = [0x0900, 0x097F]
+#indicnlp = true
+#asr_model = "ai4bharat/indic-conformer-600m-multilingual"
+#kathbath = "sanskrit"
 # No QA source yet (IndicQA has no Sanskrit): ASR track only. Extend the phrases when adding a squad_url.
-abstain_phrases = ["no answer"]
+#abstain_phrases = ["no answer"]
 
-# [ta]
-# name = "Tamil"
-# script_block = [0x0B80, 0x0BFF]
-# indicnlp = true
-# asr_model = "ai4bharat/indic-conformer-600m-multilingual"
-# kathbath = "tamil"
-# indicqa = "ta"
-# abstain_phrases = ["no answer", "பதில் இல்லை", "தகவல் இல்லை", "குறிப்பிடப்படவில்லை", "தெரியவில்லை", "கொடுக்கப்படவில்லை"]
-# # The model card lists only female Jaya/Kavitha, so the male voice is generic.
-# tts_speakers = ["Jaya", "A male speaker"]
+ [ta]
+ name = "Tamil"
+ script_block = [0x0B80, 0x0BFF]
+ indicnlp = true
+ asr_model = "ai4bharat/indic-conformer-600m-multilingual"
+ kathbath = "tamil"
+ indicqa = "ta"
+ abstain_phrases = ["no answer", "பதில் இல்லை", "தகவல் இல்லை", "குறிப்பிடப்படவில்லை", "தெரியவில்லை", "கொடுக்கப்படவில்லை"]
+ # The model card lists only female Jaya/Kavitha, so the male voice is generic.
+ tts_speakers = ["Jaya", "A male speaker"]
