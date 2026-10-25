@@ -55,5 +55,8 @@ eval:
 variance:
 	for run_index in 1 2 3; do $(PY) scripts/run_eval.py $(EVAL_ARGS) --stages asr llm --limit 5 --conditions clean --out runs/var_$$run_index --force || exit 1; done
 
+# The filled audit sheet is included once it exists.
+AUDIT_FILLED := runs/main/audit_sheet_labeled.csv
 report:
-	$(PY) scripts/make_report.py --run runs/main --variance runs/var_1 runs/var_2 runs/var_3
+	$(PY) scripts/make_report.py --run runs/main --variance runs/var_1 runs/var_2 runs/var_3 \
+		$(if $(wildcard $(AUDIT_FILLED)),--audit_filled $(AUDIT_FILLED))
